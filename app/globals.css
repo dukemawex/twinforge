@@ -19,8 +19,8 @@
   --secondary-foreground: oklch(0.28 0.03 285);
   --muted: oklch(0.97 0.005 285);
   --muted-foreground: oklch(0.5 0.02 285);
-  --accent: oklch(0.7 0.15 200);
-  --accent-foreground: oklch(0.2 0.03 250);
+  --accent: oklch(0.93 0.045 300);
+  --accent-foreground: oklch(0.32 0.12 300);
   --destructive: oklch(0.6 0.22 20);
   --border: oklch(0.92 0.008 285);
   --input: oklch(0.92 0.008 285);
@@ -79,3 +79,27 @@ body{background:var(--background)}
 .tf-chip{border:1px solid var(--border);background:var(--card);color:var(--foreground);border-radius:999px;padding:.4rem .8rem;box-shadow:0 4px 16px -6px oklch(0.58 0.24 300/.2)}
 .tf-blob{position:absolute;pointer-events:none;z-index:0;filter:drop-shadow(0 20px 40px oklch(0.2 0.02 285/.12))}
 .tf-card-solid{border:1px solid var(--border);background:var(--card);box-shadow:0 10px 40px -18px oklch(0.2 0.02 285/.25)}
+
+/* Intelligent dimensional system */
+.intelligent-geometry{position:absolute;inset:0;overflow:hidden;pointer-events:none;user-select:none}
+.intelligent-shape{position:absolute;height:auto;filter:drop-shadow(0 18px 26px oklch(0.37 0.13 300/.18));opacity:.72}
+.intelligent-geometry--app .intelligent-shape--1{right:2%;top:7rem;width:5.5rem;transform:rotate(12deg)}
+.intelligent-geometry--app .intelligent-shape--2{bottom:8%;left:1.5%;width:4.75rem}
+.intelligent-geometry--app .intelligent-shape--3{bottom:20%;right:1%;width:6rem;transform:rotate(-15deg)}
+.intelligent-geometry--auth .intelligent-shape--1{left:5%;top:10%;width:8rem;transform:rotate(-10deg)}
+.intelligent-geometry--auth .intelligent-shape--2{bottom:7%;right:6%;width:9rem}
+.intelligent-geometry--auth .intelligent-shape--3{right:10%;top:13%;width:6.5rem;transform:rotate(18deg)}
+.intelligent-geometry--section .intelligent-shape--1{left:1%;top:12%;width:7rem;transform:rotate(-10deg)}
+.intelligent-geometry--section .intelligent-shape--2{bottom:8%;right:2%;width:7.5rem}
+.intelligent-geometry--section .intelligent-shape--3{right:12%;top:4%;width:5rem;transform:rotate(16deg)}
+.intelligent-node-map{position:absolute;right:7%;top:44%;height:7rem;width:10rem;opacity:.55}
+.intelligent-node{position:absolute;z-index:2;display:block;border:1px solid color-mix(in oklab,var(--primary) 35%,var(--card));border-radius:999px;background:var(--card);box-shadow:0 6px 16px color-mix(in oklab,var(--primary) 16%,transparent)}
+.intelligent-node::after{content:"";position:absolute;inset:32%;border-radius:inherit;background:var(--primary)}
+.intelligent-node--1{left:0;top:48%;width:1.5rem;height:1.5rem}.intelligent-node--2{left:42%;top:0;width:2rem;height:2rem}.intelligent-node--3{right:0;top:38%;width:1.25rem;height:1.25rem}.intelligent-node--4{bottom:0;left:48%;width:1.1rem;height:1.1rem}
+.intelligent-link{position:absolute;z-index:1;display:block;height:1px;background:color-mix(in oklab,var(--primary) 38%,transparent);transform-origin:left center}
+.intelligent-link--1{left:1.2rem;top:3.9rem;width:5.2rem;transform:rotate(-44deg)}.intelligent-link--2{left:5.7rem;top:1.4rem;width:4.2rem;transform:rotate(35deg)}.intelligent-link--3{left:5.2rem;top:2rem;width:4.8rem;transform:rotate(83deg)}
+.intelligent-status{display:inline-flex;align-items:center;gap:.5rem;border:1px solid color-mix(in oklab,var(--primary) 18%,var(--border));border-radius:999px;background:color-mix(in oklab,var(--card) 92%,var(--primary));padding:.35rem .65rem;color:var(--primary)}
+.intelligent-status-dot{position:relative;width:.5rem;height:.5rem;border-radius:999px;background:var(--primary);box-shadow:0 0 0 4px color-mix(in oklab,var(--primary) 12%,transparent)}
+
+@media (max-width:639px){.intelligent-shape{opacity:.42}.intelligent-geometry--app .intelligent-shape--1{right:-1.5rem;top:5rem;width:4.5rem}.intelligent-geometry--app .intelligent-shape--2{bottom:2%;left:-1rem;width:4rem}.intelligent-geometry--app .intelligent-shape--3{display:none}.intelligent-geometry--auth .intelligent-shape--1{left:-2rem;top:6%;width:6rem}.intelligent-geometry--auth .intelligent-shape--2{bottom:2%;right:-2rem;width:6rem}.intelligent-geometry--auth .intelligent-shape--3{right:-1.5rem;top:22%;width:4.5rem}.intelligent-node-map{right:-2rem;top:43%;transform:scale(.72)}}
+@media (prefers-reduced-motion:reduce){.tf-reveal,.tf-dot-live{animation:none;opacity:1;transform:none}.logo-cube{transition:none}}

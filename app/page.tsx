@@ -4,6 +4,7 @@ import { ArrowRight, AudioLines, Captions, Copy, Cpu, LayoutGrid, ShieldCheck, V
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { TwinForgeLogo } from '@/components/twinforge-logo'
+import { IntelligentGeometry } from '@/components/intelligent-geometry'
 
 const features = [
   { icon: LayoutGrid, title: 'Reels-first, vertical by default', text: '9:16 output with IG and TikTok safe zones built in — not an afterthought.' },
@@ -18,7 +19,8 @@ const reels = ['/marketing/reel-1.png', '/marketing/reel-2.png', '/marketing/ree
 
 export default function Home() {
   return <main className="relative min-h-screen overflow-hidden">
-    <header className="mx-auto flex max-w-7xl items-center justify-between px-5 py-5 sm:px-8">
+    <IntelligentGeometry variant="section" className="fixed inset-0 opacity-40" />
+    <header className="relative z-20 mx-auto flex max-w-7xl items-center justify-between px-5 py-5 sm:px-8">
       <TwinForgeLogo />
       <nav className="flex items-center gap-2"><Button variant="ghost" render={<Link href="/sign-in" />}>Sign in</Button><Button render={<Link href="/sign-up" />}>Open studio</Button></nav>
     </header>
@@ -46,7 +48,7 @@ export default function Home() {
     </section>
 
     {/* BEFORE / AFTER */}
-    <section className="mx-auto max-w-7xl px-5 pb-20 sm:px-8">
+    <section className="relative z-10 mx-auto max-w-7xl px-5 pb-20 sm:px-8">
       <div className="tf-card-solid rounded-3xl p-6 sm:p-10">
         <div className="mb-8 flex max-w-2xl flex-col gap-3"><p className="font-mono text-xs uppercase tracking-[.22em] text-primary">One photo in, a presenter out</p><h2 className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl">From a selfie to a studio take.</h2></div>
         <div className="grid gap-6 sm:grid-cols-2">
@@ -57,7 +59,7 @@ export default function Home() {
     </section>
 
     {/* FEATURES */}
-    <section className="mx-auto max-w-7xl px-5 pb-24 sm:px-8">
+    <section className="relative z-10 mx-auto max-w-7xl px-5 pb-24 sm:px-8">
       <div className="mb-10 flex max-w-2xl flex-col gap-3"><p className="font-mono text-xs uppercase tracking-[.22em] text-primary">Studio workflow</p><h2 className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl">Everything the short-form grind needs.</h2></div>
       <div className="grid gap-4 md:grid-cols-3">{features.map(({ icon: Icon, title, text }, index) => <Card key={title} className="tf-card-solid"><CardHeader><div className="mb-8 flex items-center justify-between"><span className="flex size-11 items-center justify-center rounded-2xl bg-primary/10"><Icon className="size-5 text-primary" /></span><span className="font-mono text-xs text-muted-foreground">0{index + 1}</span></div><CardTitle>{title}</CardTitle></CardHeader><CardContent className="leading-relaxed text-muted-foreground">{text}</CardContent></Card>)}</div>
       <div className="tf-card-solid relative mt-16 flex flex-col items-start justify-between gap-6 overflow-hidden rounded-3xl p-8 sm:flex-row sm:items-center">
@@ -67,6 +69,6 @@ export default function Home() {
       </div>
     </section>
 
-    <footer className="border-t"><div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 px-5 py-8 sm:flex-row sm:px-8"><TwinForgeLogo compact /><span className="tf-chip inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.2em] text-muted-foreground"><span className="tf-dot-live" /> Powered by AMD Radeon GPU · ROCm</span></div></footer>
+    <footer className="relative z-10 border-t bg-background/90 backdrop-blur-sm"><div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 px-5 py-8 sm:flex-row sm:px-8"><TwinForgeLogo compact /><span className="tf-chip inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.2em] text-muted-foreground"><span className="tf-dot-live" /> Powered by AMD Radeon GPU · ROCm</span></div></footer>
   </main>
 }

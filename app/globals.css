@@ -46,8 +46,8 @@
 
 @layer base { * { @apply border-border outline-ring/50 } body { @apply bg-background text-foreground } }
 ::selection { background: color-mix(in oklab, var(--primary) 28%, transparent); }
-.studio-grid { background-color: var(--secondary); background-image: linear-gradient(to right, color-mix(in oklab, var(--accent) 12%, transparent) 1px, transparent 1px), linear-gradient(to bottom, color-mix(in oklab, var(--accent) 12%, transparent) 1px, transparent 1px); background-size: 44px 44px; }
-.surface-glow { box-shadow: 12px 16px 0 color-mix(in oklab, var(--primary) 25%, transparent); }
+.studio-grid { background-color: var(--background); }
+.surface-glow{box-shadow:0 20px 60px -24px oklch(0.58 0.24 300/.3)}
 .logo-stage { position: relative; display: flex; width: 2.75rem; height: 2.75rem; align-items: center; justify-content: center; perspective: 240px; }
 .logo-cube { position: relative; width: 1.75rem; height: 1.75rem; transform-style: preserve-3d; transform: rotateX(-18deg) rotateY(28deg); transition: transform 300ms ease; }
 .group:hover .logo-cube { transform: rotateX(-12deg) rotateY(40deg) translateY(-2px); }

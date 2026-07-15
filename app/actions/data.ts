@@ -1,10 +1,23 @@
-"use server"
+'use server'
 
-import { auth } from "@/lib/auth"
-import { db } from "@/lib/db"
-import { renderJobs, twins, videos } from "@/lib/db/schema"
-import { desc, eq } from "drizzle-orm"
-import { headers } from "next/headers"
+import { revalidatePath } from 'next/cache'
+import { headers } from 'next/headers'
+import { and, desc, eq, inArray } from 'drizzle-orm'
+import { z } from 'zod'
+import { auth } from '@/lib/auth'
+import { db } from '@/lib/db'
+import { mediaAssets, renderJobs, twins, videos } from '@/lib/db/schema'
 
-export async function getUserId() { const s = await auth.api.getSession({ headers: await headers() }); if (!s?.user) throw new Error("Unauthorized"); return s.user.id }
-export async function getWorkspaceData() { const userId = await getUserId(); const [twinRows, videoRows, jobRows] = await Promise.all([db.select().from(twins).where(eq(twins.userId,userId)).orderBy(desc(twins.createdAt)), db.select().from(videos).where(eq(videos.userId,userId)).orderBy(desc(videos.createdAt)), db.select().from(renderJobs).where(eq(renderJobs.userId,userId)).orderBy(desc(renderJobs.createdAt))]); return { twins:twinRows, videos:videoRows, jobs:jobRows } }
+export async function getUserId() { const session = await auth.api.getSession({ headers: await headers() }); if (!session?.user) throw new Error('Unauthorized'); return session.user.id }
+export async function getWorkspaceData() { const userId = await getUserId(); const [twinRows, videoRows, jobRows] = await Promise.all([db.select().from(twins).where(eq(twins.userId,userId)).orderBy(desc(twins.createdAt)),db.select().from(videos).where(eq(videos.userId,userId)).orderBy(desc(videos.createdAt)),db.select().from(renderJobs).where(eq(renderJobs.userId,userId)).orderBy(desc(renderJobs.createdAt))]); return { twins:twinRows,videos:videoRows,jobs:jobRows } }
+export async function getTwins() { const userId = await getUserId(); return db.select().from(twins).where(eq(twins.userId,userId)).orderBy(desc(twins.createdAt)) }
+
+const twinInput = z.object({ name:z.string().trim().min(2).max(80), referenceAssetId:z.string().uuid(), voiceAssetId:z.string().uuid().optional().nullable(), consent:z.literal(true) })
+export async function createPreparedTwin(input:z.input<typeof twinInput>) { const userId=await getUserId(); const value=twinInput.parse(input); const ids=[value.referenceAssetId,...(value.voiceAssetId?[value.voiceAssetId]:[])]; const owned=await db.select({id:mediaAssets.id}).from(mediaAssets).where(and(eq(mediaAssets.userId,userId),inArray(mediaAssets.id,ids))); if(owned.length!==ids.length) throw new Error('Files could not be verified'); const [record]=await db.insert(twins).values({userId,name:value.name,status:'ready_for_training',referenceAssetId:value.referenceAssetId,voiceAssetId:value.voiceAssetId??null,consentRecordedAt:new Date(),updatedAt:new Date()}).returning(); revalidatePath('/app');revalidatePath('/app/twins');return record }
+
+const productionInput=z.object({twinId:z.string().uuid(),title:z.string().trim().min(2).max(140),script:z.string().trim().min(10).max(20000),language:z.string().min(2).max(30),aspectRatio:z.enum(['16:9','9:16','1:1']),resolution:z.enum(['720p','1080p','4k']),captions:z.boolean()})
+async function ownTwin(userId:string,id:string){const [record]=await db.select().from(twins).where(and(eq(twins.userId,userId),eq(twins.id,id))).limit(1);if(!record)throw new Error('Presenter not found');return record}
+export async function prepareVideo(input:z.input<typeof productionInput>){const userId=await getUserId();const value=productionInput.parse(input);await ownTwin(userId,value.twinId);const result=await db.transaction(async tx=>{const [job]=await tx.insert(renderJobs).values({userId,twinId:value.twinId,kind:'video',status:'awaiting_gpu',progress:0,stage:'prepared',payload:value,updatedAt:new Date()}).returning();const [video]=await tx.insert(videos).values({userId,jobId:job.id,twinId:value.twinId,title:value.title,status:'awaiting_gpu',updatedAt:new Date()}).returning();return{job,video}});revalidatePath('/app');revalidatePath('/app/library');return result}
+export async function prepareBatch(input:{twinId:string;language:string;aspectRatio:'16:9'|'9:16'|'1:1';resolution:'720p'|'1080p'|'4k';captions:boolean;rows:Array<{title:string;script:string}>}){const userId=await getUserId();await ownTwin(userId,input.twinId);const rows=z.array(z.object({title:z.string().trim().min(2).max(140),script:z.string().trim().min(10).max(20000)})).min(1).max(250).parse(input.rows);const created=await db.transaction(async tx=>{const output=[];for(const row of rows){const payload=productionInput.parse({...input,...row});const [job]=await tx.insert(renderJobs).values({userId,twinId:input.twinId,kind:'batch_video',status:'awaiting_gpu',progress:0,stage:'prepared',payload,updatedAt:new Date()}).returning();const [video]=await tx.insert(videos).values({userId,jobId:job.id,twinId:input.twinId,title:row.title,status:'awaiting_gpu',updatedAt:new Date()}).returning();output.push(video)}return output});revalidatePath('/app');revalidatePath('/app/library');return{accepted:created.length}}
+export async function deleteVideo(id:string){const userId=await getUserId();const [video]=await db.select().from(videos).where(and(eq(videos.id,id),eq(videos.userId,userId))).limit(1);if(!video)throw new Error('Video not found');await db.transaction(async tx=>{if(video.jobId)await tx.delete(renderJobs).where(and(eq(renderJobs.id,video.jobId),eq(renderJobs.userId,userId)));await tx.delete(videos).where(and(eq(videos.id,id),eq(videos.userId,userId)))});revalidatePath('/app/library')}
+export async function getGpuReadiness(){await getUserId();return{endpoint:Boolean(process.env.GPU_API_URL),token:Boolean(process.env.GPU_API_TOKEN),webhookSecret:Boolean(process.env.GPU_WEBHOOK_SECRET),connected:Boolean(process.env.GPU_API_URL&&process.env.GPU_API_TOKEN)}}

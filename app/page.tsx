@@ -1,23 +1,6 @@
-export default function Page() {
-  return (
-    <main className="relative flex min-h-screen items-center justify-center bg-[color:light-dark(#fff,#000)] text-[color:light-dark(#000,#fff)]">
-      <svg
-        aria-hidden="true"
-        className="size-20"
-        fill="none"
-        viewBox="0 0 20 20"
-        xmlns="http://www.w3.org/2000/svg"
-        stroke="currentColor"
-        strokeWidth="0.5"
-      >
-        <path
-          d="M14.2 14.2H17V6.9375C17 4.76288 15.2371 3 13.0625 3H5.8V5.8M14.2 14.2V7.79063L7.79062 14.2H14.2ZM14.2 14.2V17H6.9375C4.76288 17 3 15.2371 3 13.0625V5.8H5.8M5.8 5.8V12.2313L12.2313 5.8H5.8Z"
-          strokeLinejoin="round"
-        />
-      </svg>
-      <p className="absolute left-1/2 top-[calc(50%+56px)] -translate-x-1/2 whitespace-nowrap text-sm font-medium text-muted-foreground">
-        Your v0 generation will show here.
-      </p>
-    </main>
-  )
-}
+import Link from "next/link"
+import { ArrowRight, AudioLines, ShieldCheck, Sparkles, Video } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+const features=[{icon:Video,title:"Your likeness, directed",text:"Train a consent-backed digital twin from your own reference footage."},{icon:AudioLines,title:"Voice that stays yours",text:"Pair a recorded voice profile with multilingual scripts and precise delivery."},{icon:Sparkles,title:"Production at GPU speed",text:"Send real jobs to your compute endpoint and track every stage without fabricated progress."}]
+export default function Home(){return <main className="min-h-screen overflow-hidden"><header className="mx-auto flex max-w-7xl items-center justify-between px-5 py-6"><Link href="/" className="text-lg font-semibold">TwinForge<span className="text-primary">/</span></Link><nav className="flex items-center gap-2"><Button variant="ghost" render={<Link href="/sign-in"/>}>Sign in</Button><Button render={<Link href="/sign-up"/>}>Open studio</Button></nav></header><section className="mx-auto flex max-w-7xl flex-col gap-12 px-5 pb-24 pt-20 lg:flex-row lg:items-end lg:justify-between lg:pt-32"><div className="max-w-4xl"><p className="mb-6 font-mono text-xs uppercase tracking-[0.24em] text-primary">Digital human production system</p><h1 className="text-balance text-5xl font-semibold leading-none tracking-[-0.05em] md:text-7xl lg:text-8xl">Be present in every frame.</h1><p className="mt-8 max-w-2xl text-pretty text-lg leading-relaxed text-muted-foreground md:text-xl">Create production-ready videos with your digital twin, your voice, and your approval—powered by infrastructure you control.</p><div className="mt-10 flex flex-wrap gap-3"><Button size="lg" render={<Link href="/sign-up"/>}>Create your twin <ArrowRight data-icon="inline-end"/></Button><Button size="lg" variant="outline" render={<Link href="/sign-in"/>}>Enter workspace</Button></div></div><div className="w-full max-w-sm border-l border-primary pl-5"><ShieldCheck className="mb-5 text-primary"/><p className="font-mono text-xs uppercase tracking-widest text-muted-foreground">Consent first</p><p className="mt-2 text-sm leading-relaxed">Reference media is private. Every twin records consent. No sample people, jobs, or outputs are inserted into your workspace.</p></div></section><section className="border-y border-border bg-card/30"><div className="mx-auto grid max-w-7xl md:grid-cols-3">{features.map(f=><Card key={f.title} className="rounded-none border-y-0 border-l-0 border-r md:border-b-0 last:border-r-0"><CardHeader><f.icon className="mb-8 text-primary"/><CardTitle>{f.title}</CardTitle></CardHeader><CardContent className="text-sm leading-relaxed text-muted-foreground">{f.text}</CardContent></Card>)}</div></section><footer className="mx-auto flex max-w-7xl items-center justify-between px-5 py-10 text-xs text-muted-foreground"><span>TwinForge</span><span className="font-mono">NO SEED DATA</span></footer></main>}

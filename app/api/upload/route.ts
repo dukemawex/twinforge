@@ -1,0 +1,6 @@
+import { put } from "@vercel/blob"
+import { NextRequest, NextResponse } from "next/server"
+import { auth } from "@/lib/auth"
+import { db } from "@/lib/db"
+import { mediaAssets } from "@/lib/db/schema"
+export async function POST(req:NextRequest){const session=await auth.api.getSession({headers:req.headers});if(!session?.user)return NextResponse.json({error:"Unauthorized"},{status:401});const form=await req.formData();const file=form.get("file");const kind=String(form.get("kind")||"reference");if(!(file instanceof File))return NextResponse.json({error:"File required"},{status:400});if(file.size>500*1024*1024)return NextResponse.json({error:"File too large"},{status:413});if(!["video/mp4","video/quicktime","audio/mpeg","audio/wav","text/csv"].includes(file.type))return NextResponse.json({error:"Unsupported file type"},{status:415});const safe=file.name.replace(/[^a-zA-Z0-9._-]/g,"-");const blob=await put(`${session.user.id}/${crypto.randomUUID()}-${safe}`,file,{access:"private"});const [asset]=await db.insert(mediaAssets).values({userId:session.user.id,kind,pathname:blob.pathname,contentType:file.type,size:file.size}).returning({id:mediaAssets.id});return NextResponse.json(asset,{status:201})}

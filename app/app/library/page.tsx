@@ -1,4 +1,6 @@
-import { getWorkspaceData } from "@/app/actions/data"
-import { Card,CardContent,CardDescription,CardHeader,CardTitle } from "@/components/ui/card"
-import { Film } from "lucide-react"
-export default async function Library(){const {videos}=await getWorkspaceData();return <div className="flex flex-col gap-8"><div><p className="font-mono text-xs uppercase tracking-widest text-primary">Outputs</p><h1 className="mt-2 text-3xl font-semibold">Video library</h1></div>{videos.length===0?<Card><CardContent className="flex min-h-80 flex-col items-center justify-center gap-3 text-center"><Film className="text-muted-foreground"/><p className="font-medium">No generated videos</p><p className="max-w-md text-sm text-muted-foreground">Completed GPU renders will appear here. TwinForge does not include stock or seeded outputs.</p></CardContent></Card>:<div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{videos.map(v=><Card key={v.id}><div className="flex aspect-video items-center justify-center bg-muted"><Film/></div><CardHeader><CardTitle>{v.title}</CardTitle><CardDescription>{v.status}</CardDescription></CardHeader></Card>)}</div>}</div>}
+import Link from 'next/link'
+import { Plus } from 'lucide-react'
+import { getWorkspaceData } from '@/app/actions/data'
+import { ProductionQueue } from '@/components/production-queue'
+import { Button } from '@/components/ui/button'
+export default async function Library(){const {videos}=await getWorkspaceData();return <div className="flex flex-col gap-8"><header className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><p className="font-mono text-xs uppercase tracking-[.22em] text-primary">Production queue</p><h1 className="mt-3 text-4xl font-semibold tracking-[-.04em]">Videos</h1><p className="mt-3 max-w-2xl text-muted-foreground">Prepared briefs remain here until GPU compute accepts them. Playback appears only for real completed output.</p></div><Button render={<Link href="/app/create"/>}><Plus data-icon="inline-start"/>Prepare video</Button></header><ProductionQueue videos={videos}/></div>}

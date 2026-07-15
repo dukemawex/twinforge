@@ -12,14 +12,17 @@ type TwinForgeLogoProps = {
 export function TwinForgeLogo({ className, compact = false, href = '/' }: TwinForgeLogoProps) {
   return (
     <Link href={href} className={cn('group inline-flex items-center gap-3', className)} aria-label="TwinForge home">
-      <span className="relative flex size-10 items-center justify-center overflow-hidden rounded-xl border border-primary/30 bg-primary/10 shadow-[inset_0_0_0_1px_var(--color-border)] transition-colors group-hover:bg-primary/15">
-        <span className="absolute inset-1.5 rotate-45 rounded-sm border border-primary/55" />
-        <span className="relative font-mono text-sm font-bold tracking-tighter text-primary">TF</span>
+      <span className="logo-stage" aria-hidden="true">
+        <span className="logo-cube">
+          <span className="logo-face logo-face-front">TF</span>
+          <span className="logo-face logo-face-top" />
+          <span className="logo-face logo-face-side" />
+        </span>
       </span>
       {!compact && (
         <span className="flex flex-col leading-none">
-          <span className="font-sans text-base font-semibold tracking-[-0.03em] text-foreground">TwinForge</span>
-          <span className="mt-1 font-mono text-[9px] uppercase tracking-[0.24em] text-muted-foreground">Human Video Studio</span>
+          <span className="font-sans text-base font-bold tracking-[-0.04em] text-foreground">TwinForge</span>
+          <span className="mt-1 font-mono text-[9px] uppercase tracking-[0.22em] text-muted-foreground">Human Video Studio</span>
         </span>
       )}
     </Link>

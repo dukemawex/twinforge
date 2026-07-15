@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { ArrowRight, AudioLines, Clapperboard, ShieldCheck, Sparkles } from 'lucide-react'
+import { ArrowRight, AudioLines, Clapperboard, ShieldCheck, Video } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { TwinForgeLogo } from '@/components/twinforge-logo'
@@ -7,7 +7,7 @@ import { TwinForgeLogo } from '@/components/twinforge-logo'
 const features = [
   { icon: Clapperboard, title: 'Direct every frame', text: 'Shape scripts, performances, formats, and delivery from one focused production space.' },
   { icon: AudioLines, title: 'Keep your voice', text: 'Pair your digital twin with natural voice delivery across languages and campaigns.' },
-  { icon: Sparkles, title: 'Scale the studio', text: 'Move from one polished video to entire production batches without changing tools.' },
+  { icon: Video, title: 'Scale the studio', text: 'Move from one polished video to entire production batches without changing tools.' },
 ]
 
 export default function Home() {

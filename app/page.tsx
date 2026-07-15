@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import Image from 'next/image'
-import { ArrowRight, AudioLines, Captions, Clapperboard, Cpu, LayoutGrid, ShieldCheck, Sparkles, Video } from 'lucide-react'
+import { ArrowRight, AudioLines, Captions, Clapperboard, Copy, Cpu, LayoutGrid, ShieldCheck, Video } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { TwinForgeLogo } from '@/components/twinforge-logo'
@@ -8,7 +8,7 @@ import { TwinForgeLogo } from '@/components/twinforge-logo'
 const features = [
   { icon: LayoutGrid, title: 'Reels-first, vertical by default', text: '9:16 output with IG and TikTok safe zones built in — not an afterthought.' },
   { icon: Captions, title: 'Captions burned in', text: 'Animated word-by-word captions in one toggle. Ready to post, no plugins.' },
-  { icon: Sparkles, title: 'Batch a week from one idea', text: 'Turn a single topic into ten vertical variations in one render job.' },
+  { icon: Copy, title: 'Batch a week from one idea', text: 'Turn one topic into ten vertical variations in a single render job.' },
   { icon: AudioLines, title: 'Your voice, any language', text: 'Clone your voice once, deliver in 20+ languages with natural emotion.' },
   { icon: ShieldCheck, title: 'Likeness stays yours', text: 'Consent-locked twins. Your identity never leaves your own compute.' },
   { icon: Video, title: 'Direct every frame', text: 'Scripts, framing, backgrounds, and delivery from one focused workspace.' },

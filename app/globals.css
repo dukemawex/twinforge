@@ -2,6 +2,49 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @custom-variant dark (&:is(.dark *));
-@theme inline{--font-sans:var(--font-geist-sans);--font-mono:var(--font-geist-mono);--color-background:var(--background);--color-foreground:var(--foreground);--color-card:var(--card);--color-card-foreground:var(--card-foreground);--color-popover:var(--popover);--color-popover-foreground:var(--popover-foreground);--color-primary:var(--primary);--color-primary-foreground:var(--primary-foreground);--color-secondary:var(--secondary);--color-secondary-foreground:var(--secondary-foreground);--color-muted:var(--muted);--color-muted-foreground:var(--muted-foreground);--color-accent:var(--accent);--color-accent-foreground:var(--accent-foreground);--color-destructive:var(--destructive);--color-border:var(--border);--color-input:var(--input);--color-ring:var(--ring);--color-sidebar:var(--sidebar);--color-sidebar-foreground:var(--sidebar-foreground);--color-chart-1:var(--chart-1);--radius-sm:calc(var(--radius) - 4px);--radius-md:calc(var(--radius) - 2px);--radius-lg:var(--radius);--radius-xl:calc(var(--radius) + 4px)}
-:root{color-scheme:dark;--radius:.5rem;--background:#090a0d;--foreground:#f3f4f6;--card:#111319;--card-foreground:#f3f4f6;--popover:#111319;--popover-foreground:#f3f4f6;--primary:#35d6ff;--primary-foreground:#061014;--secondary:#1a1d25;--secondary-foreground:#f3f4f6;--muted:#171a21;--muted-foreground:#9399a8;--accent:#242936;--accent-foreground:#f3f4f6;--destructive:#ff5c7a;--border:#282c36;--input:#282c36;--ring:#35d6ff;--sidebar:#0d0f14;--sidebar-foreground:#f3f4f6;--chart-1:#35d6ff}
-@layer base{*{@apply border-border outline-ring/50}body{@apply bg-background text-foreground}::selection{background:var(--primary);color:var(--primary-foreground)}}
+
+:root {
+  color-scheme: dark;
+  --radius: .875rem;
+  --background: oklch(0.12 0.012 265);
+  --foreground: oklch(0.96 0.008 92);
+  --card: oklch(0.16 0.014 265);
+  --card-foreground: oklch(0.96 0.008 92);
+  --popover: oklch(0.17 0.014 265);
+  --popover-foreground: oklch(0.96 0.008 92);
+  --primary: oklch(0.72 0.19 302);
+  --primary-foreground: oklch(0.12 0.012 265);
+  --secondary: oklch(0.21 0.014 265);
+  --secondary-foreground: oklch(0.92 0.01 92);
+  --muted: oklch(0.2 0.012 265);
+  --muted-foreground: oklch(0.66 0.018 265);
+  --accent: oklch(0.86 0.18 125);
+  --accent-foreground: oklch(0.14 0.02 125);
+  --destructive: oklch(0.63 0.22 25);
+  --border: oklch(0.28 0.018 265);
+  --input: oklch(0.24 0.016 265);
+  --ring: oklch(0.72 0.19 302);
+  --chart-1: oklch(0.72 0.19 302);
+  --sidebar: oklch(0.14 0.013 265);
+  --sidebar-foreground: oklch(0.94 0.008 92);
+}
+
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-background: var(--background); --color-foreground: var(--foreground);
+  --color-card: var(--card); --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover); --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary); --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary); --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted); --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent); --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive); --color-border: var(--border); --color-input: var(--input); --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar); --color-sidebar-foreground: var(--sidebar-foreground); --color-chart-1: var(--chart-1);
+  --radius-sm: calc(var(--radius) - 4px); --radius-md: calc(var(--radius) - 2px); --radius-lg: var(--radius); --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base { * { @apply border-border outline-ring/50 } body { @apply bg-background text-foreground } }
+::selection { background: color-mix(in oklab, var(--primary) 40%, transparent); }
+.studio-grid { background-image: linear-gradient(to right, color-mix(in oklab, var(--border) 32%, transparent) 1px, transparent 1px), linear-gradient(to bottom, color-mix(in oklab, var(--border) 32%, transparent) 1px, transparent 1px); background-size: 44px 44px; }
+.surface-glow { box-shadow: 0 24px 80px color-mix(in oklab, var(--primary) 10%, transparent); }

@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { Boxes, BrainCircuit, Clapperboard, LayoutDashboard, Library, LogOut, Menu, Plus, Settings, Users, X } from 'lucide-react'
+import { Boxes, BrainCircuit, Clapperboard, Image as ImageIcon, LayoutDashboard, Library, LogOut, Menu, Plus, Settings, Users, X } from 'lucide-react'
 import { useState } from 'react'
 import { authClient } from '@/lib/auth-client'
 import { Button } from '@/components/ui/button'
@@ -15,6 +15,7 @@ const navigation = [
   { href: '/app', label: 'Overview', icon: LayoutDashboard },
   { href: '/app/twins', label: 'Digital twins', icon: Users },
   { href: '/app/create', label: 'Create video', icon: Clapperboard },
+  { href: '/app/photo', label: 'Photo to video', icon: ImageIcon },
   { href: '/app/batch', label: 'Batch studio', icon: Boxes },
   { href: '/app/library', label: 'Library', icon: Library },
 ]

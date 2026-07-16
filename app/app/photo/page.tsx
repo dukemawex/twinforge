@@ -1,0 +1,2 @@
+import { PhotoVideoForm } from '@/components/preparation-forms'
+export default function PhotoVideo(){return <div className="mx-auto flex max-w-5xl flex-col gap-8"><header><p className="font-mono text-xs uppercase tracking-[.22em] text-primary">Avatar V</p><h1 className="mt-3 text-4xl font-semibold tracking-[-.04em]">One photo. Unlimited looks.</h1><p className="mt-3 max-w-2xl text-muted-foreground">Generate a talking avatar video from a single photo. Prepare it now; rendering begins when GPU compute is connected.</p></header><PhotoVideoForm/></div>}

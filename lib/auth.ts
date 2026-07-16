@@ -1,7 +1,7 @@
 import { betterAuth } from 'better-auth'
 import { emailOTP } from 'better-auth/plugins'
 import { pool } from '@/lib/db'
-import { mailerConfigured, resetEmailHtml, sendMail, verificationCodeEmailHtml } from '@/lib/mailer'
+import { passwordResetCodeEmailHtml, sendMail, verificationCodeEmailHtml } from '@/lib/mailer'
 
 function normalizeUrl(value?: string) {
   if (!value) return undefined
@@ -36,11 +36,7 @@ export const auth = betterAuth({
     autoSignIn: false,
     requireEmailVerification: true,
     minPasswordLength: 8,
-    sendResetPassword: mailerConfigured
-      ? async ({ user, url }) => {
-          await sendMail(user.email, 'Reset your TwinForge password', resetEmailHtml(url))
-        }
-      : undefined,
+    revokeSessionsOnPasswordReset: true,
   },
   emailVerification: {
     autoSignInAfterVerification: true,
@@ -52,8 +48,13 @@ export const auth = betterAuth({
       allowedAttempts: 5,
       overrideDefaultEmailVerification: true,
       async sendVerificationOTP({ email, otp, type }) {
-        if (type !== 'email-verification') return
-        await sendMail(email, `${otp} is your TwinForge verification code`, verificationCodeEmailHtml(otp))
+        if (type === 'email-verification') {
+          await sendMail(email, `${otp} is your TwinForge verification code`, verificationCodeEmailHtml(otp))
+          return
+        }
+        if (type === 'forget-password') {
+          await sendMail(email, `${otp} is your TwinForge password reset code`, passwordResetCodeEmailHtml(otp))
+        }
       },
     }),
   ],

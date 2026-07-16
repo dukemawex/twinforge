@@ -116,7 +116,13 @@ export function AuthForm({ mode }: { mode: 'sign-in' | 'sign-up' }) {
                 disabled={loading}
                 aria-describedby={mode === 'sign-up' ? 'password-help' : undefined}
               />
-              {mode === 'sign-up' && <p id="password-help" className="text-xs text-muted-foreground">Use at least 8 characters.</p>}
+              {mode === 'sign-up' ? (
+                <p id="password-help" className="text-xs text-muted-foreground">Use at least 8 characters.</p>
+              ) : (
+                <Link className="self-end text-xs font-medium text-primary underline-offset-4 hover:underline" href="/forgot-password">
+                  Forgot password?
+                </Link>
+              )}
             </div>
             {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
             <Button size="lg" type="submit" disabled={loading}>

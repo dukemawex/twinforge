@@ -1,6 +1,7 @@
 import { betterAuth } from 'better-auth'
+import { emailOTP } from 'better-auth/plugins'
 import { pool } from '@/lib/db'
-import { mailerConfigured, resetEmailHtml, sendMail } from '@/lib/mailer'
+import { mailerConfigured, resetEmailHtml, sendMail, verificationCodeEmailHtml } from '@/lib/mailer'
 
 function normalizeUrl(value?: string) {
   if (!value) return undefined
@@ -32,7 +33,8 @@ export const auth = betterAuth({
   trustedOrigins,
   emailAndPassword: {
     enabled: true,
-    autoSignIn: true,
+    autoSignIn: false,
+    requireEmailVerification: true,
     minPasswordLength: 8,
     sendResetPassword: mailerConfigured
       ? async ({ user, url }) => {
@@ -40,6 +42,21 @@ export const auth = betterAuth({
         }
       : undefined,
   },
+  emailVerification: {
+    autoSignInAfterVerification: true,
+    sendOnSignIn: true,
+  },
+  plugins: [
+    emailOTP({
+      expiresIn: 600,
+      allowedAttempts: 5,
+      overrideDefaultEmailVerification: true,
+      async sendVerificationOTP({ email, otp, type }) {
+        if (type !== 'email-verification') return
+        await sendMail(email, `${otp} is your TwinForge verification code`, verificationCodeEmailHtml(otp))
+      },
+    }),
+  ],
   advanced:
     process.env.NODE_ENV === 'development'
       ? { defaultCookieAttributes: { sameSite: 'none', secure: true } }

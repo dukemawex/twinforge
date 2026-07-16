@@ -40,7 +40,29 @@ export function AuthForm({ mode }: { mode: 'sign-in' | 'sign-up' }) {
           : await authClient.signIn.email({ email, password })
 
       if (result.error) {
+        const needsVerification =
+          mode === 'sign-in' &&
+          (result.error.code === 'EMAIL_NOT_VERIFIED' || result.error.message?.toLowerCase().includes('not verified'))
+
+        if (needsVerification) {
+          const otpResult = await authClient.emailOtp.sendVerificationOtp({
+            email,
+            type: 'email-verification',
+          })
+          if (otpResult.error) {
+            setError(otpResult.error.message || 'Unable to send your verification code.')
+            return
+          }
+          router.replace(`/verify-email?email=${encodeURIComponent(email)}`)
+          return
+        }
+
         setError(result.error.message || 'Unable to continue. Check your details and try again.')
+        return
+      }
+
+      if (mode === 'sign-up') {
+        router.replace(`/verify-email?email=${encodeURIComponent(email)}`)
         return
       }
 

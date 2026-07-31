@@ -1,8 +1,60 @@
-import { put } from '@vercel/blob'
+import { handleUpload, type HandleUploadBody } from '@vercel/blob/client'
 import { NextResponse, type NextRequest } from 'next/server'
 import { auth } from '@/lib/auth'
-import { db } from '@/lib/db'
-import { mediaAssets } from '@/lib/db/schema'
-const limits={reference:250*1024*1024,voice:30*1024*1024,photo:15*1024*1024,csv:5*1024*1024} as const
-const allowed={reference:['video/mp4','video/webm','video/quicktime'],voice:['audio/mpeg','audio/wav','audio/x-wav','audio/mp4','audio/webm'],photo:['image/png','image/jpeg','image/webp'],csv:['text/csv','application/vnd.ms-excel']} as const
-export async function POST(request:NextRequest){const session=await auth.api.getSession({headers:request.headers});if(!session?.user)return NextResponse.json({error:'Unauthorized'},{status:401});try{const data=await request.formData();const file=data.get('file');const kind=String(data.get('kind'));if(!(file instanceof File)||!['reference','voice','photo','csv'].includes(kind))return NextResponse.json({error:'Choose a supported file'},{status:400});const typedKind=kind as keyof typeof limits;if(file.size===0||file.size>limits[typedKind])return NextResponse.json({error:'File size is outside the allowed range'},{status:400});if(!(allowed[typedKind] as readonly string[]).includes(file.type))return NextResponse.json({error:'Unsupported file format'},{status:400});const safe=file.name.replace(/[^a-zA-Z0-9._-]/g,'-').slice(-100);const blob=await put(`users/${session.user.id}/${typedKind}/${crypto.randomUUID()}-${safe}`,file,{access:'private',contentType:file.type});const [asset]=await db.insert(mediaAssets).values({userId:session.user.id,kind:typedKind,pathname:blob.pathname,contentType:file.type,size:file.size}).returning();return NextResponse.json({asset:{id:asset.id,name:file.name,size:file.size,contentType:file.type}})}catch{return NextResponse.json({error:'Upload could not be completed'},{status:500})}}
+
+const limits = { reference: 250 * 1024 * 1024, voice: 30 * 1024 * 1024, photo: 15 * 1024 * 1024, csv: 5 * 1024 * 1024 } as const
+const allowed = {
+  reference: ['video/mp4', 'video/webm', 'video/quicktime'],
+  voice: ['audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/mp4', 'audio/webm'],
+  photo: ['image/png', 'image/jpeg', 'image/webp'],
+  csv: ['text/csv', 'application/vnd.ms-excel'],
+} as const
+export type UploadKind = keyof typeof limits
+export const uploadLimits = limits
+export const uploadAllowed = allowed
+const isKind = (v: unknown): v is UploadKind => typeof v === 'string' && v in limits
+
+// Client uploads go straight from the browser to Blob storage. Routing the file
+// through this function would cap it at Vercel's 4.5 MB request body limit and
+// return a non-JSON "Request Entity Too Large" page.
+export async function POST(request: NextRequest) {
+  const session = await auth.api.getSession({ headers: request.headers })
+  if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  let body: HandleUploadBody
+  try {
+    body = (await request.json()) as HandleUploadBody
+  } catch {
+    return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
+  }
+
+  try {
+    const result = await handleUpload({
+      body,
+      request,
+      onBeforeGenerateToken: async (pathname, clientPayload) => {
+        let kind: unknown
+        try {
+          kind = clientPayload ? (JSON.parse(clientPayload) as { kind?: unknown }).kind : undefined
+        } catch {
+          throw new Error('Choose a supported file')
+        }
+        if (!isKind(kind)) throw new Error('Choose a supported file')
+        // The browser picks the pathname, so pin it to a shape we control.
+        if (!new RegExp(`^uploads/${kind}/[A-Za-z0-9._-]+$`).test(pathname)) throw new Error('Invalid upload path')
+        return {
+          allowedContentTypes: [...allowed[kind]],
+          maximumSizeInBytes: limits[kind],
+          addRandomSuffix: false,
+          tokenPayload: JSON.stringify({ userId: session.user.id, kind }),
+        }
+      },
+      // The media_assets row is written by /api/upload/complete, which the browser
+      // calls once the upload resolves, so there is a single write path.
+      onUploadCompleted: async () => {},
+    })
+    return NextResponse.json(result)
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Upload could not be started' }, { status: 400 })
+  }
+}

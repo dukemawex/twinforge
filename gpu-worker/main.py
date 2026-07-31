@@ -37,7 +37,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-APP = FastAPI(title="TwinForge GPU Worker", version="1.0.0")
+app = FastAPI(title="TwinForge GPU Worker", version="1.0.0")
 ROOT = Path(__file__).resolve().parent
 OUTPUT_DIR = ROOT / "outputs"
 WORK_DIR = ROOT / "work"
@@ -51,7 +51,7 @@ VLLM_BASE_URL = (os.environ.get("VLLM_BASE_URL") or "").rstrip("/")
 VLLM_API_KEY = os.environ.get("VLLM_API_KEY") or "EMPTY"
 VLLM_MODEL = os.environ.get("VLLM_MODEL") or "Qwen/Qwen2.5-7B-Instruct"
 
-APP.mount("/outputs", StaticFiles(directory=str(OUTPUT_DIR)), name="outputs")
+app.mount("/outputs", StaticFiles(directory=str(OUTPUT_DIR)), name="outputs")
 
 
 class AssetRef(BaseModel):
@@ -318,7 +318,7 @@ async def process_job(job: JobRequest) -> None:
         )
 
 
-@APP.get("/health")
+@app.get("/health")
 async def health() -> dict[str, Any]:
     return {
         "ok": True,
@@ -329,7 +329,7 @@ async def health() -> dict[str, Any]:
     }
 
 
-@APP.post("/jobs")
+@app.post("/jobs")
 async def create_job(
     job: JobRequest,
     background: BackgroundTasks,
@@ -341,7 +341,7 @@ async def create_job(
     return {"id": job.jobId, "jobId": job.jobId}
 
 
-@APP.get("/outputs/{name}")
+@app.get("/outputs/{name}")
 async def get_output(name: str) -> FileResponse:
     path = OUTPUT_DIR / Path(name).name
     if not path.exists():

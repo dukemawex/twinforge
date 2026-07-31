@@ -15,3 +15,10 @@ node_modules
 .DS_Store
 next-env.d.ts
 pnpm-workspace.yaml
+
+# GPU worker runtime artifacts
+gpu-worker/outputs/
+gpu-worker/work/
+gpu-worker/.venv/
+__pycache__/
+*.pyc

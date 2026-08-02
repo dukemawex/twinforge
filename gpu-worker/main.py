@@ -2,7 +2,12 @@
 TwinForge GPU worker for Anrui / RunPod / any ROCm box.
 
 Accepts jobs from TwinForge at POST /jobs, renders a captioned video with ffmpeg,
-and reports progress to TwinForge's HMAC webhook.
+and reports progress two ways: a best-effort HMAC webhook, and durable on-disk
+job state that TwinForge can poll at GET /jobs/{id}.
+
+Polling is authoritative. Networks that block the TwinForge host outbound (for
+example a GPU box behind a national firewall) still work, because every call is
+then initiated by TwinForge inbound over the tunnel.
 
 Run on Anrui:
   pip install -r requirements.txt
@@ -28,6 +33,7 @@ import os
 import shutil
 import subprocess
 import textwrap
+import time
 from pathlib import Path
 from typing import Any
 
@@ -37,12 +43,14 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="TwinForge GPU Worker", version="1.0.0")
+app = FastAPI(title="TwinForge GPU Worker", version="1.1.0")
 ROOT = Path(__file__).resolve().parent
 OUTPUT_DIR = ROOT / "outputs"
 WORK_DIR = ROOT / "work"
+STATE_DIR = ROOT / "state"
 OUTPUT_DIR.mkdir(exist_ok=True)
 WORK_DIR.mkdir(exist_ok=True)
+STATE_DIR.mkdir(exist_ok=True)
 
 API_KEY = os.environ.get("GPU_API_KEY") or os.environ.get("GPU_API_TOKEN") or ""
 WEBHOOK_SECRET = os.environ.get("GPU_WEBHOOK_SECRET") or ""
@@ -67,7 +75,7 @@ class JobRequest(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     twin: dict[str, Any] | None = None
     assets: dict[str, AssetRef | None] = Field(default_factory=dict)
-    callbackUrl: str
+    callbackUrl: str | None = None
     assetAuthHeader: str | None = None
 
 
@@ -83,7 +91,34 @@ def sign(body: bytes) -> str:
     return hmac.new(WEBHOOK_SECRET.encode("utf-8"), body, hashlib.sha256).hexdigest()
 
 
-async def post_webhook(callback_url: str, payload: dict[str, Any]) -> None:
+def state_path(job_id: str) -> Path:
+    return STATE_DIR / f"{Path(job_id).name}.json"
+
+
+def read_state(job_id: str) -> dict[str, Any] | None:
+    path = state_path(job_id)
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def write_state(job_id: str, payload: dict[str, Any]) -> None:
+    """Persist job state atomically so a restart or crash cannot lose it."""
+    current = read_state(job_id) or {"jobId": job_id}
+    current.update(payload)
+    current["updatedAt"] = time.time()
+    tmp = state_path(job_id).with_suffix(".tmp")
+    tmp.write_text(json.dumps(current))
+    tmp.replace(state_path(job_id))
+
+
+async def post_webhook(callback_url: str | None, payload: dict[str, Any]) -> None:
+    """Best effort only. A webhook that cannot be delivered must never fail a render."""
+    if not callback_url:
+        return
     if not WEBHOOK_SECRET:
         print("GPU_WEBHOOK_SECRET missing; skipping webhook", flush=True)
         return
@@ -92,9 +127,18 @@ async def post_webhook(callback_url: str, payload: dict[str, Any]) -> None:
         "content-type": "application/json",
         "x-twinforge-signature": sign(raw),
     }
-    async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.post(callback_url, content=raw, headers=headers)
-        response.raise_for_status()
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.post(callback_url, content=raw, headers=headers)
+            response.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        print(f"webhook delivery failed (state still recorded): {exc}", flush=True)
+
+
+async def report(job: JobRequest, payload: dict[str, Any]) -> None:
+    """Record state first, then try to push. Polling is the source of truth."""
+    write_state(job.jobId, payload)
+    await post_webhook(job.callbackUrl, {"jobId": job.jobId, **payload})
 
 
 def resolution_size(resolution: str, aspect: str) -> tuple[int, int]:
@@ -244,9 +288,8 @@ async def process_job(job: JobRequest) -> None:
     job_dir = WORK_DIR / job.jobId
     job_dir.mkdir(parents=True, exist_ok=True)
     try:
-        await post_webhook(
-            job.callbackUrl,
-            {"jobId": job.jobId, "status": "processing", "progress": 10, "stage": "accepted"},
+        await report(
+            job, {"status": "processing", "progress": 10, "stage": "accepted"}
         )
 
         payload = job.payload or {}
@@ -257,9 +300,8 @@ async def process_job(job: JobRequest) -> None:
         width, height = resolution_size(resolution, aspect)
         duration = max(8, min(45, max(1, len(script.split()) // 2)))
 
-        await post_webhook(
-            job.callbackUrl,
-            {"jobId": job.jobId, "status": "processing", "progress": 25, "stage": "script"},
+        await report(
+            job, {"status": "processing", "progress": 25, "stage": "script"}
         )
         polished = await maybe_polish_script(script)
 
@@ -272,9 +314,8 @@ async def process_job(job: JobRequest) -> None:
             job_dir / "source.bin",
         )
 
-        await post_webhook(
-            job.callbackUrl,
-            {"jobId": job.jobId, "status": "processing", "progress": 55, "stage": "rendering"},
+        await report(
+            job, {"status": "processing", "progress": 55, "stage": "rendering"}
         )
 
         out_name = f"{job.jobId}.mp4"
@@ -290,26 +331,24 @@ async def process_job(job: JobRequest) -> None:
             out_path=out_path,
         )
 
-        if not PUBLIC_URL:
-            raise RuntimeError("WORKER_PUBLIC_URL is required so TwinForge can fetch the output")
-
-        output_url = f"{PUBLIC_URL}/outputs/{out_name}"
-        await post_webhook(
-            job.callbackUrl,
+        output_url = f"{PUBLIC_URL}/outputs/{out_name}" if PUBLIC_URL else None
+        await report(
+            job,
             {
-                "jobId": job.jobId,
                 "status": "completed",
                 "progress": 100,
                 "stage": "completed",
+                "outputName": out_name,
                 "outputUrl": output_url,
                 "durationSeconds": duration,
+                "error": None,
             },
         )
     except Exception as exc:  # noqa: BLE001
-        await post_webhook(
-            job.callbackUrl,
+        print(f"job {job.jobId} failed: {exc}", flush=True)
+        await report(
+            job,
             {
-                "jobId": job.jobId,
                 "status": "failed",
                 "progress": 100,
                 "stage": "failed",
@@ -326,6 +365,7 @@ async def health() -> dict[str, Any]:
         "publicUrl": PUBLIC_URL or None,
         "vllm": bool(VLLM_BASE_URL),
         "authRequired": bool(API_KEY),
+        "polling": True,
     }
 
 
@@ -335,10 +375,20 @@ async def create_job(
     background: BackgroundTasks,
     _: None = Depends(require_auth),
 ) -> dict[str, str]:
-    if not job.callbackUrl:
-        raise HTTPException(status_code=400, detail="callbackUrl required")
+    write_state(job.jobId, {"status": "queued", "progress": 0, "stage": "accepted", "error": None})
     background.add_task(process_job, job)
     return {"id": job.jobId, "jobId": job.jobId}
+
+
+@app.get("/jobs/{job_id}")
+async def get_job(job_id: str, _: None = Depends(require_auth)) -> dict[str, Any]:
+    """Authoritative job state. TwinForge polls this instead of relying on webhooks."""
+    state = read_state(job_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Unknown job")
+    name = state.get("outputName")
+    state["outputReady"] = bool(name and (OUTPUT_DIR / str(name)).exists())
+    return state
 
 
 @app.get("/outputs/{name}")

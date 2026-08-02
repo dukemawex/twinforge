@@ -7,7 +7,13 @@ import { z } from 'zod'
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { mediaAssets, renderJobs, twins, videos } from '@/lib/db/schema'
-import { dispatchRenderJob, getGpuReadinessFlags, isGpuConfigured } from '@/lib/gpu'
+import {
+  dispatchRenderJob,
+  getGpuReadinessFlags,
+  isGpuConfigured,
+  presignedBlobUrl,
+  reconcileRenderJob,
+} from '@/lib/gpu'
 
 export async function getUserId() {
   const session = await auth.api.getSession({ headers: await headers() })
@@ -22,7 +28,55 @@ export async function getWorkspaceData() {
     db.select().from(videos).where(eq(videos.userId, userId)).orderBy(desc(videos.createdAt)),
     db.select().from(renderJobs).where(eq(renderJobs.userId, userId)).orderBy(desc(renderJobs.createdAt)),
   ])
-  return { twins: twinRows, videos: videoRows, jobs: jobRows }
+  const outputIds = videoRows
+    .map((v) => v.outputAssetId)
+    .filter((id): id is string => Boolean(id))
+  const outputAssets = outputIds.length
+    ? await db.select().from(mediaAssets).where(inArray(mediaAssets.id, outputIds))
+    : []
+  const assetById = new Map(outputAssets.map((a) => [a.id, a]))
+
+  // Playback links are minted per request: private blobs, short-lived URLs.
+  const videosWithPlayback = await Promise.all(
+    videoRows.map(async (video) => {
+      const asset = video.outputAssetId ? assetById.get(video.outputAssetId) : undefined
+      if (!asset) return { ...video, playbackUrl: video.externalUrl }
+      try {
+        return { ...video, playbackUrl: await presignedBlobUrl(asset.pathname) }
+      } catch {
+        return { ...video, playbackUrl: video.externalUrl }
+      }
+    }),
+  )
+
+  return { twins: twinRows, videos: videosWithPlayback, jobs: jobRows }
+}
+
+/**
+ * Pull the truth from the GPU worker for anything still in flight.
+ *
+ * The worker cannot always call us back, so the app asks instead. Without this
+ * a job whose webhook is lost stays "processing" forever.
+ */
+export async function reconcileMyJobs() {
+  const userId = await getUserId()
+  if (!isGpuConfigured()) return { updated: 0, pending: 0 }
+
+  const pending = await db
+    .select()
+    .from(renderJobs)
+    .where(and(eq(renderJobs.userId, userId), inArray(renderJobs.status, ['queued', 'processing'])))
+
+  let updated = 0
+  for (const job of pending) {
+    try {
+      if (await reconcileRenderJob(job)) updated += 1
+    } catch (error) {
+      console.error('Reconcile failed for job', job.id, error)
+    }
+  }
+  if (updated) revalidatePath('/app/library')
+  return { updated, pending: pending.length }
 }
 
 export async function getTwins() {

@@ -1,4 +1,4 @@
-import { get } from '@vercel/blob'
+import { get, issueSignedToken, presignUrl, put } from '@vercel/blob'
 import { db } from '@/lib/db'
 import { mediaAssets, renderJobs, twins, videos } from '@/lib/db/schema'
 import { and, eq } from 'drizzle-orm'
@@ -45,6 +45,28 @@ export function getGpuReadinessFlags() {
 
 type JobRow = typeof renderJobs.$inferSelect
 
+const ASSET_URL_TTL_MS = 6 * 60 * 60 * 1000
+const STALE_JOB_MS = 30 * 60 * 1000
+
+/**
+ * Short-lived direct link to a private blob on *.blob.vercel-storage.com.
+ *
+ * The GPU worker cannot be assumed to reach this app's own hostname — a worker
+ * behind a national firewall can reach Blob storage but not *.vercel.app. A
+ * presigned URL keeps the asset private while removing that dependency.
+ */
+export async function presignedBlobUrl(pathname: string, ttlMs = ASSET_URL_TTL_MS) {
+  const validUntil = Date.now() + ttlMs
+  const token = await issueSignedToken({ pathname, operations: ['get'], validUntil })
+  const { presignedUrl } = await presignUrl(token, {
+    access: 'private',
+    operation: 'get',
+    pathname,
+    validUntil,
+  })
+  return presignedUrl
+}
+
 async function resolveAsset(userId: string, assetId?: string | null) {
   if (!assetId) return null
   const [asset] = await db
@@ -53,11 +75,19 @@ async function resolveAsset(userId: string, assetId?: string | null) {
     .where(and(eq(mediaAssets.id, assetId), eq(mediaAssets.userId, userId)))
     .limit(1)
   if (!asset) return null
+
+  let url = `${appPublicUrl()}/api/worker/assets/${asset.id}`
+  try {
+    url = await presignedBlobUrl(asset.pathname)
+  } catch (error) {
+    console.error('Presign failed; falling back to proxy URL', error)
+  }
+
   return {
     id: asset.id,
     kind: asset.kind,
     contentType: asset.contentType,
-    url: `${appPublicUrl()}/api/worker/assets/${asset.id}`,
+    url,
   }
 }
 
@@ -184,4 +214,153 @@ export async function dispatchRenderJob(jobId: string) {
 
 export async function readPrivateAssetStream(pathname: string) {
   return get(pathname, { access: 'private' })
+}
+
+type WorkerJobState = {
+  jobId?: string
+  status?: string
+  progress?: number
+  stage?: string
+  error?: string | null
+  outputName?: string | null
+  outputUrl?: string | null
+  outputReady?: boolean
+  durationSeconds?: number | null
+}
+
+/** Ask the worker directly how a job is doing. Inbound only, so firewall-safe. */
+export async function fetchWorkerJobState(externalJobId: string): Promise<WorkerJobState | null> {
+  if (!isGpuConfigured()) return null
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 15000)
+  try {
+    const res = await fetch(`${gpuBaseUrl()}/jobs/${encodeURIComponent(externalJobId)}`, {
+      headers: { authorization: `Bearer ${gpuApiKey()}` },
+      cache: 'no-store',
+      signal: controller.signal,
+    })
+    if (!res.ok) return null
+    return (await res.json()) as WorkerJobState
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** Copy a finished render off the worker into Blob so it outlives the pod. */
+async function importWorkerOutput(job: JobRow, state: WorkerJobState) {
+  const name = state.outputName || `${job.id}.mp4`
+  const res = await fetch(`${gpuBaseUrl()}/outputs/${encodeURIComponent(name)}`, {
+    headers: { authorization: `Bearer ${gpuApiKey()}` },
+    cache: 'no-store',
+  })
+  if (!res.ok) throw new Error(`Could not fetch output (${res.status})`)
+  const buffer = await res.arrayBuffer()
+  const pathname = `outputs/${job.userId}/${job.id}.mp4`
+  await put(pathname, buffer, { access: 'private', contentType: 'video/mp4', allowOverwrite: true })
+  const [asset] = await db
+    .insert(mediaAssets)
+    .values({
+      userId: job.userId,
+      kind: 'output',
+      pathname,
+      contentType: 'video/mp4',
+      size: buffer.byteLength,
+    })
+    .returning()
+  return asset
+}
+
+/**
+ * Pull current state for one in-flight job and write it to the database.
+ * Returns true when something changed.
+ */
+export async function reconcileRenderJob(job: JobRow) {
+  if (!isGpuConfigured()) return false
+  const externalId = job.externalJobId || job.id
+  const state = await fetchWorkerJobState(externalId)
+
+  if (!state) {
+    const age = Date.now() - new Date(job.updatedAt).getTime()
+    if (age < STALE_JOB_MS) return false
+    await db
+      .update(renderJobs)
+      .set({
+        status: 'failed',
+        stage: 'worker_lost',
+        error: 'The GPU worker has no record of this job. It may have restarted.',
+        updatedAt: new Date(),
+      })
+      .where(eq(renderJobs.id, job.id))
+    await db
+      .update(videos)
+      .set({ status: 'failed', updatedAt: new Date() })
+      .where(eq(videos.jobId, job.id))
+    return true
+  }
+
+  const status = state.status || 'processing'
+  const progress = Math.max(0, Math.min(100, state.progress ?? job.progress))
+
+  if (status === 'completed') {
+    let playbackUrl = state.outputUrl || null
+    let outputAssetId: string | null = null
+    try {
+      const asset = await importWorkerOutput(job, state)
+      if (asset) {
+        outputAssetId = asset.id
+        playbackUrl = await presignedBlobUrl(asset.pathname)
+      }
+    } catch (error) {
+      // Keep the worker URL as a fallback so the render is not lost.
+      console.error('Output import failed; falling back to worker URL', error)
+    }
+
+    await db
+      .update(renderJobs)
+      .set({ status: 'completed', progress: 100, stage: 'completed', error: null, updatedAt: new Date() })
+      .where(eq(renderJobs.id, job.id))
+    await db
+      .update(videos)
+      .set({
+        status: 'completed',
+        externalUrl: playbackUrl,
+        outputAssetId: outputAssetId ?? undefined,
+        durationSeconds: state.durationSeconds ?? undefined,
+        updatedAt: new Date(),
+      })
+      .where(eq(videos.jobId, job.id))
+    return true
+  }
+
+  if (status === 'failed') {
+    await db
+      .update(renderJobs)
+      .set({
+        status: 'failed',
+        progress,
+        stage: state.stage || 'failed',
+        error: state.error || 'Render failed on the GPU worker',
+        updatedAt: new Date(),
+      })
+      .where(eq(renderJobs.id, job.id))
+    await db
+      .update(videos)
+      .set({ status: 'failed', updatedAt: new Date() })
+      .where(eq(videos.jobId, job.id))
+    return true
+  }
+
+  if (progress === job.progress && (state.stage || null) === job.stage) return false
+
+  await db
+    .update(renderJobs)
+    .set({ status: 'processing', progress, stage: state.stage || job.stage, updatedAt: new Date() })
+    .where(eq(renderJobs.id, job.id))
+  await db
+    .update(videos)
+    .set({ status: 'processing', updatedAt: new Date() })
+    .where(eq(videos.jobId, job.id))
+  return true
 }

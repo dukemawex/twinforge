@@ -32,6 +32,7 @@ function stageLabel(stage?: string | null) {
     submitted: 'Submitted',
     script: 'Preparing script',
     assets: 'Downloading assets',
+    speech: 'Synthesizing speech',
     rendering: 'Rendering',
     completed: 'Completed',
     failed: 'Failed',

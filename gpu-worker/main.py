@@ -1,9 +1,10 @@
 """
 TwinForge GPU worker for Anrui / RunPod / any ROCm box.
 
-Accepts jobs from TwinForge at POST /jobs, renders a captioned video with ffmpeg,
-and reports progress two ways: a best-effort HMAC webhook, and durable on-disk
-job state that TwinForge can poll at GET /jobs/{id}.
+Accepts jobs from TwinForge at POST /jobs, synthesizes speech (edge-tts),
+keeps reference-video motion (or Ken Burns on photos), cover-crops to fill the
+frame, and writes an MP4. Progress is reported two ways: a best-effort HMAC
+webhook, and durable on-disk job state that TwinForge can poll at GET /jobs/{id}.
 
 Polling is authoritative. Networks that block the TwinForge host outbound (for
 example a GPU box behind a national firewall) still work, because every call is
@@ -43,7 +44,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="TwinForge GPU Worker", version="1.2.0")
+app = FastAPI(title="TwinForge GPU Worker", version="1.3.0")
 ROOT = Path(__file__).resolve().parent
 OUTPUT_DIR = ROOT / "outputs"
 WORK_DIR = ROOT / "work"
@@ -247,18 +248,18 @@ async def download_asset(asset: AssetRef | None, auth_header: str | None, dest: 
 
 
 def burn_captions(script: str, width: int, fontfile: str | None = None) -> str:
-    wrapped = textwrap.fill(script[:500], width=max(24, width // 28))
+    wrapped = textwrap.fill(script[:420], width=max(24, width // 28))
     escaped = (
         wrapped.replace("\\", "\\\\")
         .replace(":", "\\:")
         .replace("'", "\\'")
         .replace("%", "\\%")
     )
-    fontsize = max(28, width // 28)
+    fontsize = max(26, width // 32)
     font_opt = f"fontfile={fontfile}:" if fontfile else ""
     return (
         f"drawtext={font_opt}text='{escaped}':fontcolor=white:fontsize={fontsize}:"
-        f"box=1:boxcolor=black@0.55:boxborderw=24:x=(w-text_w)/2:y=h-text_h-80"
+        f"box=1:boxcolor=black@0.45:boxborderw=18:x=(w-text_w)/2:y=h-text_h-64"
     )
 
 
@@ -283,10 +284,23 @@ def extension_for_content_type(content_type: str | None) -> str:
         "video/mp4": ".mp4",
         "video/webm": ".webm",
         "video/quicktime": ".mov",
+        "audio/mpeg": ".mp3",
+        "audio/wav": ".wav",
+        "audio/x-wav": ".wav",
+        "audio/mp4": ".m4a",
+        "audio/webm": ".webm",
     }
     if not content_type:
         return ".bin"
     return mapping.get(content_type.split(";")[0].strip().lower(), ".bin")
+
+
+def is_video_media(path: Path | None, content_type: str | None = None) -> bool:
+    if content_type and content_type.lower().startswith("video/"):
+        return True
+    if not path:
+        return False
+    return path.suffix.lower() in {".mp4", ".webm", ".mov", ".mkv", ".m4v"}
 
 
 def ffmpeg_error_tail(stderr: str, limit: int = 800) -> str:
@@ -294,7 +308,6 @@ def ffmpeg_error_tail(stderr: str, limit: int = 800) -> str:
     text = (stderr or "").strip()
     if not text:
         return "ffmpeg failed"
-    # Prefer lines that look like real failures.
     lines = [ln for ln in text.splitlines() if ln.strip()]
     interesting = [
         ln
@@ -314,72 +327,234 @@ def run_ffmpeg(cmd: list[str]) -> None:
         raise RuntimeError(ffmpeg_error_tail(proc.stderr))
 
 
-def prepare_still_frame(source: Path, dest: Path) -> Path:
-    """Turn a photo or reference video into one JPEG still for captioned output.
+def probe_duration(path: Path) -> float:
+    if not path.exists():
+        return 0.0
+    proc = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    try:
+        return max(0.0, float((proc.stdout or "").strip()))
+    except ValueError:
+        return 0.0
 
-    Reference twins upload MP4/MOV clips, but the renderer loops a still. Feeding
-    a video to `-loop 1` (image mode) is what produced the opaque ffmpeg banner
-    failures in the library.
-    """
-    if not shutil.which("ffmpeg"):
-        raise RuntimeError("ffmpeg is required on the GPU worker host")
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-i",
-        str(source),
-        "-frames:v",
-        "1",
-        "-q:v",
-        "2",
-        str(dest),
-    ]
-    run_ffmpeg(cmd)
-    if not dest.exists() or dest.stat().st_size == 0:
-        raise RuntimeError("Could not extract a still frame from the uploaded media")
-    return dest
+
+def pick_edge_voice(voice_hint: str, language: str) -> str:
+    """Map TwinForge UI voice labels / language to an edge-tts neural voice."""
+    hint = (voice_hint or "").lower()
+    lang = (language or "English").lower()
+    named = {
+        "aria": "en-US-AriaNeural",
+        "kwame": "en-US-GuyNeural",
+        "zainab": "en-US-JennyNeural",
+        "chidi": "en-US-DavisNeural",
+        "nadia": "en-GB-SoniaNeural",
+    }
+    for key, voice in named.items():
+        if key in hint:
+            return voice
+    if "french" in lang:
+        return "fr-FR-DeniseNeural"
+    if "spanish" in lang:
+        return "es-ES-ElviraNeural"
+    if "portuguese" in lang or "brazil" in lang:
+        return "pt-BR-FranciscaNeural"
+    if "hausa" in lang or "yoruba" in lang or "igbo" in lang or "nigeria" in lang:
+        return "en-NG-EzinneNeural"
+    if "uk" in lang or "british" in lang:
+        return "en-GB-SoniaNeural"
+    return "en-US-AriaNeural"
+
+
+async def synthesize_speech(
+    text: str,
+    out_path: Path,
+    *,
+    voice_hint: str = "",
+    language: str = "English",
+) -> float:
+    """Speak the script. Prefer edge-tts; fall back to espeak-ng if needed."""
+    cleaned = " ".join((text or "").split())
+    if not cleaned:
+        cleaned = "TwinForge production."
+
+    try:
+        import edge_tts  # type: ignore
+
+        voice = pick_edge_voice(voice_hint, language)
+        await edge_tts.Communicate(cleaned, voice=voice).save(str(out_path))
+        duration = probe_duration(out_path)
+        if duration > 0.4 and out_path.exists():
+            return duration
+    except Exception as exc:  # noqa: BLE001
+        print(f"edge-tts failed, trying espeak: {exc}", flush=True)
+
+    if shutil.which("espeak-ng") or shutil.which("espeak"):
+        bin_name = "espeak-ng" if shutil.which("espeak-ng") else "espeak"
+        wav = out_path.with_suffix(".wav")
+        proc = subprocess.run(
+            [bin_name, "-w", str(wav), cleaned[:2000]],
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode == 0 and wav.exists() and wav.stat().st_size > 0:
+            if out_path.suffix.lower() == ".wav":
+                wav.replace(out_path)
+            else:
+                run_ffmpeg(["ffmpeg", "-y", "-i", str(wav), "-c:a", "libmp3lame", str(out_path)])
+            duration = probe_duration(out_path)
+            if duration > 0.4:
+                return duration
+
+    # Last resort: soft tone so the render still has an audio track.
+    run_ffmpeg(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=44100:duration=3",
+            "-c:a",
+            "libmp3lame",
+            str(out_path),
+        ]
+    )
+    return probe_duration(out_path) or 3.0
+
+
+def visual_filter(
+    *,
+    width: int,
+    height: int,
+    captions: str | None,
+    motion: str,
+    duration: float,
+) -> str:
+    """Cover-crop framing (no black bars) + optional motion + captions."""
+    if motion == "zoom":
+        frames = max(25, int(duration * 25))
+        # Ken Burns on a photo: zoompan also outputs exact frame size (fills canvas).
+        parts = [
+            "zoompan="
+            f"z='min(1.0+0.00045*on,1.12)':"
+            f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+            f"d={frames}:s={width}x{height}:fps=25"
+        ]
+    else:
+        parts = [
+            f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},setsar=1"
+        ]
+    if captions:
+        parts.append(captions)
+    return ",".join(parts)
 
 
 def render_ffmpeg(
     *,
-    image_path: Path | None,
+    media_path: Path | None,
+    media_is_video: bool,
+    speech_path: Path | None,
     title: str,
     script: str,
     width: int,
     height: int,
-    duration: int,
+    duration: float,
+    captions_enabled: bool,
     out_path: Path,
 ) -> None:
+    """Compose a speaking, moving presenter cut.
+
+    - Reference **video** keeps real motion (looped/trimmed to speech length)
+    - **Photo** gets a slow zoom instead of a frozen still
+    - Framing uses cover-crop (fills the frame — no black letterbox bars)
+    - Audio comes from TTS speech when available
+    """
     if not shutil.which("ffmpeg"):
         raise RuntimeError("ffmpeg is required on the GPU worker host")
 
     font = find_font()
-    filter_complex = burn_captions(f"{title}\\n\\n{script}", width, font)
-    still: Path | None = None
-    if image_path and image_path.exists():
-        still = image_path.with_name("still.jpg")
-        prepare_still_frame(image_path, still)
+    caption = None
+    if captions_enabled:
+        caption = burn_captions(f"{title}\\n\\n{script}", width, font)
 
-    if still and still.exists():
+    duration = max(3.0, min(90.0, float(duration)))
+    has_speech = bool(speech_path and speech_path.exists() and speech_path.stat().st_size > 0)
+    audio_input = (
+        ["-i", str(speech_path)]
+        if has_speech
+        else ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"]
+    )
+
+    if media_path and media_path.exists() and media_is_video:
+        vf = visual_filter(
+            width=width, height=height, captions=caption, motion="none", duration=duration
+        )
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-stream_loop",
+            "-1",
+            "-i",
+            str(media_path),
+            *audio_input,
+            "-vf",
+            vf,
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-t",
+            f"{duration:.2f}",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-shortest",
+            str(out_path),
+        ]
+    elif media_path and media_path.exists():
+        vf = visual_filter(
+            width=width, height=height, captions=caption, motion="zoom", duration=duration
+        )
         cmd = [
             "ffmpeg",
             "-y",
             "-loop",
             "1",
+            "-framerate",
+            "25",
             "-i",
-            str(still),
-            "-f",
-            "lavfi",
-            "-i",
-            "anullsrc=channel_layout=stereo:sample_rate=44100",
+            str(media_path),
+            *audio_input,
             "-vf",
-            f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,"
-            f"{filter_complex}",
+            vf,
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
             "-t",
-            str(duration),
+            f"{duration:.2f}",
             "-c:v",
             "libx264",
+            "-preset",
+            "veryfast",
             "-pix_fmt",
             "yuv420p",
             "-c:a",
@@ -388,21 +563,24 @@ def render_ffmpeg(
             str(out_path),
         ]
     else:
+        # Soft blue gradient backdrop when no likeness media is available.
+        vf = caption or "null"
         cmd = [
             "ffmpeg",
             "-y",
             "-f",
             "lavfi",
             "-i",
-            f"color=c=#0b1220:s={width}x{height}:d={duration}",
-            "-f",
-            "lavfi",
-            "-i",
-            "anullsrc=channel_layout=stereo:sample_rate=44100",
+            f"color=c=#0b1220:s={width}x{height}:d={duration:.2f}",
+            *audio_input,
             "-vf",
-            filter_complex,
+            vf,
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
             "-t",
-            str(duration),
+            f"{duration:.2f}",
             "-c:v",
             "libx264",
             "-pix_fmt",
@@ -427,45 +605,67 @@ async def process_job(job: JobRequest) -> None:
         payload = job.payload or {}
         title = str(payload.get("title") or "TwinForge production")
         script = str(payload.get("script") or "")
+        language = str(payload.get("language") or "English")
+        voice_hint = str(payload.get("voice") or "")
+        captions_enabled = bool(payload.get("captions", True))
         aspect = str(payload.get("aspectRatio") or "16:9")
         resolution = str(payload.get("resolution") or "1080p")
         width, height = resolution_size(resolution, aspect)
-        duration = max(8, min(45, max(1, len(script.split()) // 2)))
 
         await report(
-            job, {"status": "processing", "progress": 25, "stage": "script"}
+            job, {"status": "processing", "progress": 22, "stage": "script"}
         )
         polished = await maybe_polish_script(script)
 
         photo = job.assets.get("photo") if isinstance(job.assets, dict) else None
         reference = job.assets.get("reference") if isinstance(job.assets, dict) else None
-        image_asset = photo or reference
+        media_asset = photo or reference
         await report(
-            job, {"status": "processing", "progress": 40, "stage": "assets"}
+            job, {"status": "processing", "progress": 35, "stage": "assets"}
         )
         ext = ".bin"
-        if isinstance(image_asset, AssetRef):
-            ext = extension_for_content_type(image_asset.contentType)
-        image_path = await download_asset(
-            image_asset if isinstance(image_asset, AssetRef) else None,
+        if isinstance(media_asset, AssetRef):
+            ext = extension_for_content_type(media_asset.contentType)
+        media_path = await download_asset(
+            media_asset if isinstance(media_asset, AssetRef) else None,
             job.assetAuthHeader,
             job_dir / f"source{ext}",
         )
+        media_is_video = is_video_media(
+            media_path,
+            media_asset.contentType if isinstance(media_asset, AssetRef) else None,
+        )
 
         await report(
-            job, {"status": "processing", "progress": 55, "stage": "rendering"}
+            job, {"status": "processing", "progress": 50, "stage": "speech"}
+        )
+        speech_path = job_dir / "speech.mp3"
+        speech_duration = await synthesize_speech(
+            polished,
+            speech_path,
+            voice_hint=voice_hint,
+            language=language,
+        )
+        # Prefer spoken length; keep a floor so very short scripts are not abrupt.
+        duration = max(4.0, min(90.0, speech_duration + 0.35))
+
+        await report(
+            job, {"status": "processing", "progress": 70, "stage": "rendering"}
         )
 
         out_name = f"{job.jobId}.mp4"
         out_path = OUTPUT_DIR / out_name
         await asyncio.to_thread(
             render_ffmpeg,
-            image_path=image_path,
+            media_path=media_path,
+            media_is_video=media_is_video,
+            speech_path=speech_path,
             title=title,
             script=polished,
             width=width,
             height=height,
             duration=duration,
+            captions_enabled=captions_enabled,
             out_path=out_path,
         )
 
@@ -478,13 +678,12 @@ async def process_job(job: JobRequest) -> None:
                 "stage": "completed",
                 "outputName": out_name,
                 "outputUrl": output_url,
-                "durationSeconds": duration,
+                "durationSeconds": int(round(duration)),
                 "error": None,
             },
         )
     except Exception as exc:  # noqa: BLE001
         print(f"job {job.jobId} failed: {exc}", flush=True)
-        # Keep the tail — ffmpeg banners are long and used to hide the real error.
         message = str(exc)
         await report(
             job,
@@ -499,13 +698,22 @@ async def process_job(job: JobRequest) -> None:
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
+    tts = False
+    try:
+        import edge_tts  # noqa: F401
+
+        tts = True
+    except Exception:  # noqa: BLE001
+        tts = bool(shutil.which("espeak-ng") or shutil.which("espeak"))
     return {
         "ok": True,
         "ffmpeg": bool(shutil.which("ffmpeg")),
+        "tts": tts,
         "publicUrl": PUBLIC_URL or None,
         "vllm": bool(VLLM_BASE_URL),
         "authRequired": bool(API_KEY),
         "polling": True,
+        "version": "1.3.0",
     }
 
 

@@ -43,7 +43,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="TwinForge GPU Worker", version="1.1.0")
+app = FastAPI(title="TwinForge GPU Worker", version="1.2.0")
 ROOT = Path(__file__).resolve().parent
 OUTPUT_DIR = ROOT / "outputs"
 WORK_DIR = ROOT / "work"
@@ -246,7 +246,7 @@ async def download_asset(asset: AssetRef | None, auth_header: str | None, dest: 
     raise RuntimeError(f"Could not download asset after 3 attempts: {last_error}")
 
 
-def burn_captions(script: str, width: int) -> str:
+def burn_captions(script: str, width: int, fontfile: str | None = None) -> str:
     wrapped = textwrap.fill(script[:500], width=max(24, width // 28))
     escaped = (
         wrapped.replace("\\", "\\\\")
@@ -255,10 +255,89 @@ def burn_captions(script: str, width: int) -> str:
         .replace("%", "\\%")
     )
     fontsize = max(28, width // 28)
+    font_opt = f"fontfile={fontfile}:" if fontfile else ""
     return (
-        f"drawtext=text='{escaped}':fontcolor=white:fontsize={fontsize}:"
+        f"drawtext={font_opt}text='{escaped}':fontcolor=white:fontsize={fontsize}:"
         f"box=1:boxcolor=black@0.55:boxborderw=24:x=(w-text_w)/2:y=h-text_h-80"
     )
+
+
+def find_font() -> str | None:
+    for candidate in (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+    ):
+        if Path(candidate).exists():
+            return candidate
+    return None
+
+
+def extension_for_content_type(content_type: str | None) -> str:
+    mapping = {
+        "image/jpeg": ".jpg",
+        "image/jpg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+        "video/mp4": ".mp4",
+        "video/webm": ".webm",
+        "video/quicktime": ".mov",
+    }
+    if not content_type:
+        return ".bin"
+    return mapping.get(content_type.split(";")[0].strip().lower(), ".bin")
+
+
+def ffmpeg_error_tail(stderr: str, limit: int = 800) -> str:
+    """Keep the useful end of ffmpeg logs (banner/config is huge and useless)."""
+    text = (stderr or "").strip()
+    if not text:
+        return "ffmpeg failed"
+    # Prefer lines that look like real failures.
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    interesting = [
+        ln
+        for ln in lines
+        if any(
+            key in ln.lower()
+            for key in ("error", "invalid", "failed", "cannot", "no such", "unknown", "not found")
+        )
+    ]
+    chosen = "\n".join(interesting[-12:] if interesting else lines[-12:])
+    return chosen[-limit:]
+
+
+def run_ffmpeg(cmd: list[str]) -> None:
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(ffmpeg_error_tail(proc.stderr))
+
+
+def prepare_still_frame(source: Path, dest: Path) -> Path:
+    """Turn a photo or reference video into one JPEG still for captioned output.
+
+    Reference twins upload MP4/MOV clips, but the renderer loops a still. Feeding
+    a video to `-loop 1` (image mode) is what produced the opaque ffmpeg banner
+    failures in the library.
+    """
+    if not shutil.which("ffmpeg"):
+        raise RuntimeError("ffmpeg is required on the GPU worker host")
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(source),
+        "-frames:v",
+        "1",
+        "-q:v",
+        "2",
+        str(dest),
+    ]
+    run_ffmpeg(cmd)
+    if not dest.exists() or dest.stat().st_size == 0:
+        raise RuntimeError("Could not extract a still frame from the uploaded media")
+    return dest
 
 
 def render_ffmpeg(
@@ -274,16 +353,21 @@ def render_ffmpeg(
     if not shutil.which("ffmpeg"):
         raise RuntimeError("ffmpeg is required on the GPU worker host")
 
-    filter_complex = burn_captions(f"{title}\\n\\n{script}", width)
-    cmd: list[str]
+    font = find_font()
+    filter_complex = burn_captions(f"{title}\\n\\n{script}", width, font)
+    still: Path | None = None
     if image_path and image_path.exists():
+        still = image_path.with_name("still.jpg")
+        prepare_still_frame(image_path, still)
+
+    if still and still.exists():
         cmd = [
             "ffmpeg",
             "-y",
             "-loop",
             "1",
             "-i",
-            str(image_path),
+            str(still),
             "-f",
             "lavfi",
             "-i",
@@ -329,9 +413,7 @@ def render_ffmpeg(
             str(out_path),
         ]
 
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    if proc.returncode != 0:
-        raise RuntimeError(proc.stderr[-2000:] or "ffmpeg failed")
+    run_ffmpeg(cmd)
 
 
 async def process_job(job: JobRequest) -> None:
@@ -361,10 +443,13 @@ async def process_job(job: JobRequest) -> None:
         await report(
             job, {"status": "processing", "progress": 40, "stage": "assets"}
         )
+        ext = ".bin"
+        if isinstance(image_asset, AssetRef):
+            ext = extension_for_content_type(image_asset.contentType)
         image_path = await download_asset(
             image_asset if isinstance(image_asset, AssetRef) else None,
             job.assetAuthHeader,
-            job_dir / "source.bin",
+            job_dir / f"source{ext}",
         )
 
         await report(
@@ -399,13 +484,15 @@ async def process_job(job: JobRequest) -> None:
         )
     except Exception as exc:  # noqa: BLE001
         print(f"job {job.jobId} failed: {exc}", flush=True)
+        # Keep the tail — ffmpeg banners are long and used to hide the real error.
+        message = str(exc)
         await report(
             job,
             {
                 "status": "failed",
                 "progress": 100,
                 "stage": "failed",
-                "error": str(exc)[:1000],
+                "error": message[-1000:] if len(message) > 1000 else message,
             },
         )
 

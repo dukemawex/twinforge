@@ -9,6 +9,7 @@ export default async function Settings() {
     ['Authentication token', gpu.token],
     ['Webhook verification', gpu.webhookSecret],
     ['Live worker /health', gpu.probe.ok],
+    ['Talking-head lip-sync', Boolean(gpu.probe.lipsync)],
   ] as const
 
   return (
@@ -30,7 +31,7 @@ export default async function Settings() {
               <CardTitle>GPU production service</CardTitle>
               <CardDescription className="mt-2">
                 {gpu.connected
-                  ? 'Jobs will submit to your GPU worker automatically.'
+                  ? gpu.probe.message
                   : gpu.endpoint && gpu.token
                     ? gpu.probe.message
                     : 'Add GPU_API_BASE_URL + GPU_API_KEY in Vercel. Use the rc-tunnel worker URL, not the Anrui gallery.'}
@@ -57,6 +58,14 @@ export default async function Settings() {
           {!gpu.probe.ok && gpu.endpoint && (
             <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm leading-relaxed text-destructive">
               {gpu.probe.message}
+            </div>
+          )}
+          {gpu.probe.ok && !gpu.probe.lipsync && (
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm leading-relaxed">
+              Lip-sync models are not on the pod yet. Renders still work (motion + TTS). For real
+              talking-head output run{' '}
+              <code className="font-mono text-xs">bash scripts/bootstrap_talking_head.sh</code> in{' '}
+              <code className="font-mono text-xs">gpu-worker</code>, restart uvicorn, then retry a job.
             </div>
           )}
           <div className="mt-2 flex items-start gap-3 rounded-xl bg-secondary p-4">

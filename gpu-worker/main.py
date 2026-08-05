@@ -2,9 +2,10 @@
 TwinForge GPU worker for Anrui / RunPod / any ROCm box.
 
 Accepts jobs from TwinForge at POST /jobs, synthesizes speech (edge-tts),
-keeps reference-video motion (or Ken Burns on photos), cover-crops to fill the
-frame, and writes an MP4. Progress is reported two ways: a best-effort HMAC
-webhook, and durable on-disk job state that TwinForge can poll at GET /jobs/{id}.
+runs Wav2Lip talking-head lip-sync when models are bootstrapped (else falls
+back to motion+TTS), cover-crops to fill the frame, and writes an MP4.
+Progress is reported two ways: a best-effort HMAC webhook, and durable
+on-disk job state that TwinForge can poll at GET /jobs/{id}.
 
 Polling is authoritative. Networks that block the TwinForge host outbound (for
 example a GPU box behind a national firewall) still work, because every call is
@@ -44,7 +45,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="TwinForge GPU Worker", version="1.3.0")
+app = FastAPI(title="TwinForge GPU Worker", version="1.4.0")
 ROOT = Path(__file__).resolve().parent
 OUTPUT_DIR = ROOT / "outputs"
 WORK_DIR = ROOT / "work"
@@ -594,6 +595,54 @@ def render_ffmpeg(
     run_ffmpeg(cmd)
 
 
+def finish_talking_head_composite(
+    *,
+    lipsync_video: Path,
+    speech_path: Path,
+    title: str,
+    script: str,
+    width: int,
+    height: int,
+    duration: float,
+    captions_enabled: bool,
+    out_path: Path,
+) -> None:
+    """Fit lip-synced footage to delivery aspect + optional captions."""
+    font = find_font()
+    caption = burn_captions(f"{title}\\n\\n{script}", width, font) if captions_enabled else None
+    vf = visual_filter(
+        width=width, height=height, captions=caption, motion="none", duration=duration
+    )
+    run_ffmpeg(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(lipsync_video),
+            "-i",
+            str(speech_path),
+            "-vf",
+            vf,
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-t",
+            f"{duration:.2f}",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-shortest",
+            str(out_path),
+        ]
+    )
+
+
 async def process_job(job: JobRequest) -> None:
     job_dir = WORK_DIR / job.jobId
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -649,25 +698,70 @@ async def process_job(job: JobRequest) -> None:
         # Prefer spoken length; keep a floor so very short scripts are not abrupt.
         duration = max(4.0, min(90.0, speech_duration + 0.35))
 
-        await report(
-            job, {"status": "processing", "progress": 70, "stage": "rendering"}
-        )
-
         out_name = f"{job.jobId}.mp4"
         out_path = OUTPUT_DIR / out_name
-        await asyncio.to_thread(
-            render_ffmpeg,
-            media_path=media_path,
-            media_is_video=media_is_video,
-            speech_path=speech_path,
-            title=title,
-            script=polished,
-            width=width,
-            height=height,
-            duration=duration,
-            captions_enabled=captions_enabled,
-            out_path=out_path,
-        )
+        used_lipsync = False
+
+        if media_path and media_path.exists():
+            try:
+                from talking_head import animate_talking_head, lipsync_ready
+
+                if lipsync_ready():
+                    await report(
+                        job, {"status": "processing", "progress": 62, "stage": "lipsync"}
+                    )
+                    lipsync_out = job_dir / "lipsync.mp4"
+                    await asyncio.to_thread(
+                        animate_talking_head,
+                        media_path=media_path,
+                        media_is_video=media_is_video,
+                        speech_path=speech_path,
+                        duration=duration,
+                        work_dir=job_dir / "talking_head",
+                        outfile=lipsync_out,
+                    )
+                    # Scale/cover to requested delivery size + optional captions.
+                    await report(
+                        job, {"status": "processing", "progress": 88, "stage": "rendering"}
+                    )
+                    finish_talking_head_composite(
+                        lipsync_video=lipsync_out,
+                        speech_path=speech_path,
+                        title=title,
+                        script=polished,
+                        width=width,
+                        height=height,
+                        duration=duration,
+                        captions_enabled=captions_enabled,
+                        out_path=out_path,
+                    )
+                    used_lipsync = True
+                else:
+                    print(
+                        "talking-head not ready — run scripts/bootstrap_talking_head.sh; "
+                        "falling back to motion compositor",
+                        flush=True,
+                    )
+            except Exception as lipsync_exc:  # noqa: BLE001
+                print(f"lip-sync failed, falling back to motion compositor: {lipsync_exc}", flush=True)
+
+        if not used_lipsync:
+            await report(
+                job, {"status": "processing", "progress": 75, "stage": "rendering"}
+            )
+            await asyncio.to_thread(
+                render_ffmpeg,
+                media_path=media_path,
+                media_is_video=media_is_video,
+                speech_path=speech_path,
+                title=title,
+                script=polished,
+                width=width,
+                height=height,
+                duration=duration,
+                captions_enabled=captions_enabled,
+                out_path=out_path,
+            )
 
         output_url = f"{PUBLIC_URL}/outputs/{out_name}" if PUBLIC_URL else None
         await report(
@@ -680,6 +774,7 @@ async def process_job(job: JobRequest) -> None:
                 "outputUrl": output_url,
                 "durationSeconds": int(round(duration)),
                 "error": None,
+                "lipsync": used_lipsync,
             },
         )
     except Exception as exc:  # noqa: BLE001
@@ -705,15 +800,23 @@ async def health() -> dict[str, Any]:
         tts = True
     except Exception:  # noqa: BLE001
         tts = bool(shutil.which("espeak-ng") or shutil.which("espeak"))
+    lipsync: dict[str, Any] = {"ready": False}
+    try:
+        from talking_head import status as lipsync_status
+
+        lipsync = lipsync_status()
+    except Exception as exc:  # noqa: BLE001
+        lipsync = {"ready": False, "error": str(exc)[:200]}
     return {
         "ok": True,
         "ffmpeg": bool(shutil.which("ffmpeg")),
         "tts": tts,
+        "lipsync": lipsync,
         "publicUrl": PUBLIC_URL or None,
         "vllm": bool(VLLM_BASE_URL),
         "authRequired": bool(API_KEY),
         "polling": True,
-        "version": "1.3.0",
+        "version": "1.4.0",
     }
 
 

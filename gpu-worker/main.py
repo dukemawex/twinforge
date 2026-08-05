@@ -184,16 +184,66 @@ async def maybe_polish_script(script: str) -> str:
 
 
 async def download_asset(asset: AssetRef | None, auth_header: str | None, dest: Path) -> Path | None:
+    """Pull a job asset to disk.
+
+    Large reference clips (~50MB+) used to fail mid-transfer with httpx
+    IncompleteRead ("peer closed connection… received X, expected Y") because
+    we buffered the whole body and used a short timeout. Stream to disk and
+    retry transient disconnects. Presigned Blob URLs must not get our Bearer
+    token — that header is only for the TwinForge asset proxy fallback.
+    """
     if not asset or not asset.url:
         return None
-    headers = {}
-    if auth_header:
+
+    headers: dict[str, str] = {}
+    host = ""
+    try:
+        host = httpx.URL(asset.url).host or ""
+    except Exception:  # noqa: BLE001
+        host = ""
+    # Only the app proxy needs TwinForge auth. Blob / CDN signed URLs do not.
+    if auth_header and (
+        host.endswith(".vercel.app")
+        or host in {"localhost", "127.0.0.1"}
+        or "/api/worker/assets/" in asset.url
+    ):
         headers["authorization"] = auth_header
-    async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
-        response = await client.get(asset.url, headers=headers)
-        response.raise_for_status()
-        dest.write_bytes(response.content)
-    return dest
+
+    timeout = httpx.Timeout(connect=30.0, read=600.0, write=60.0, pool=30.0)
+    last_error: Exception | None = None
+
+    for attempt in range(1, 4):
+        tmp = dest.with_suffix(f"{dest.suffix}.part")
+        try:
+            if tmp.exists():
+                tmp.unlink()
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+                async with client.stream("GET", asset.url, headers=headers) as response:
+                    response.raise_for_status()
+                    expected = response.headers.get("content-length")
+                    expected_n = int(expected) if expected and expected.isdigit() else None
+                    written = 0
+                    with tmp.open("wb") as handle:
+                        async for chunk in response.aiter_bytes(chunk_size=1024 * 256):
+                            handle.write(chunk)
+                            written += len(chunk)
+                    if expected_n is not None and written != expected_n:
+                        raise httpx.RemoteProtocolError(
+                            f"incomplete download (received {written} bytes, expected {expected_n})"
+                        )
+                    if written == 0:
+                        raise RuntimeError("Downloaded asset was empty")
+            tmp.replace(dest)
+            return dest
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            if tmp.exists():
+                tmp.unlink(missing_ok=True)
+            print(f"asset download attempt {attempt}/3 failed: {exc}", flush=True)
+            if attempt < 3:
+                await asyncio.sleep(1.5 * attempt)
+
+    raise RuntimeError(f"Could not download asset after 3 attempts: {last_error}")
 
 
 def burn_captions(script: str, width: int) -> str:
@@ -308,6 +358,9 @@ async def process_job(job: JobRequest) -> None:
         photo = job.assets.get("photo") if isinstance(job.assets, dict) else None
         reference = job.assets.get("reference") if isinstance(job.assets, dict) else None
         image_asset = photo or reference
+        await report(
+            job, {"status": "processing", "progress": 40, "stage": "assets"}
+        )
         image_path = await download_asset(
             image_asset if isinstance(image_asset, AssetRef) else None,
             job.assetAuthHeader,

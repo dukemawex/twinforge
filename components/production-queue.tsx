@@ -31,6 +31,7 @@ function stageLabel(stage?: string | null) {
     accepted: 'Accepted by GPU',
     submitted: 'Submitted',
     script: 'Preparing script',
+    assets: 'Downloading assets',
     rendering: 'Rendering',
     completed: 'Completed',
     failed: 'Failed',

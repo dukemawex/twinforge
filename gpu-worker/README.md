@@ -49,4 +49,27 @@ rc-tunnel expose --port 8081
 
 - `GET /health`
 - `POST /jobs` (Bearer `GPU_API_KEY`)
+- `GET /jobs/{id}` (polling — authoritative when webhooks cannot reach TwinForge)
 - `GET /outputs/<jobId>.mp4`
+
+## Troubleshooting: HTML “Not Found” / frp page
+
+If TwinForge shows an error that looks like:
+
+> The page you requested was not found… The server is powered by frp.
+
+then `GPU_API_BASE_URL` is an **rc-tunnel URL whose backend is down**. frp answers the HTTPS request, but uvicorn is not listening (or the tunnel was never started).
+
+Fix on the pod:
+
+```bash
+cd /workspace/gpu-worker   # or wherever you installed
+source .venv/bin/activate
+uvicorn main:app --host 127.0.0.1 --port 8081
+# other terminal:
+rc-tunnel expose --port 8081
+```
+
+Then set Vercel `GPU_API_BASE_URL` to the printed `https://rc-….radeon.firstdg.ai` URL and redeploy.
+
+Do **not** use `https://radeon-global.anruicloud.com/` or a `/spaces/.../v1` chat URL.

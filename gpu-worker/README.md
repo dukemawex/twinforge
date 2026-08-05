@@ -90,3 +90,13 @@ If the library shows a wall of ffmpeg build flags, the real error was truncated.
 Current worker extracts a still frame from reference **videos** (twins upload
 MP4/MOV, not only photos) before captioning, and keeps the useful tail of
 ffmpeg errors. Restart uvicorn after updating `main.py`.
+
+## Output quality (v1.3)
+
+The worker now:
+- keeps **motion** from reference videos (loops/trims to speech length)
+- adds a slow **Ken Burns zoom** on photos
+- **cover-crops** to fill the frame (no black letterbox bars)
+- synthesizes **spoken audio** with `edge-tts` (espeak fallback)
+
+This is still not full lip-sync / avatar animation — that needs a dedicated talking-head model.

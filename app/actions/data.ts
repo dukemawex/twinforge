@@ -12,6 +12,7 @@ import {
   getGpuReadinessFlags,
   isGpuConfigured,
   presignedBlobUrl,
+  probeGpuWorker,
   reconcileRenderJob,
 } from '@/lib/gpu'
 
@@ -143,6 +144,10 @@ async function afterJobCreated(jobId: string) {
   return { dispatched: result.ok, error: result.ok ? undefined : result.error }
 }
 
+function throwIfDispatchFailed(result: Awaited<ReturnType<typeof afterJobCreated>>) {
+  if (result.dispatched === false && result.error) throw new Error(result.error)
+}
+
 export async function prepareVideo(input: z.input<typeof productionInput>) {
   const userId = await getUserId()
   const value = productionInput.parse(input)
@@ -174,7 +179,7 @@ export async function prepareVideo(input: z.input<typeof productionInput>) {
       .returning()
     return { job, video }
   })
-  await afterJobCreated(result.job.id)
+  await afterJobCreated(result.job.id).then(throwIfDispatchFailed)
   revalidatePath('/app')
   revalidatePath('/app/library')
   return result
@@ -234,12 +239,15 @@ export async function prepareBatch(input: {
     return output
   })
 
+  let dispatchError: string | undefined
   for (const item of created) {
-    await afterJobCreated(item.jobId)
+    const result = await afterJobCreated(item.jobId)
+    if (!result.dispatched && result.error) dispatchError = result.error
   }
 
   revalidatePath('/app')
   revalidatePath('/app/library')
+  if (dispatchError) throw new Error(dispatchError)
   return { accepted: created.length }
 }
 
@@ -290,7 +298,7 @@ export async function preparePhotoVideo(input: z.input<typeof photoInput>) {
     return { job, video }
   })
 
-  await afterJobCreated(result.job.id)
+  await afterJobCreated(result.job.id).then(throwIfDispatchFailed)
   revalidatePath('/app')
   revalidatePath('/app/library')
   return result
@@ -337,5 +345,12 @@ export async function retryGpuJob(videoId: string) {
 
 export async function getGpuReadiness() {
   await getUserId()
-  return getGpuReadinessFlags()
+  const flags = getGpuReadinessFlags()
+  const probe = await probeGpuWorker()
+  return {
+    ...flags,
+    // "connected" means env is set AND the worker answered /health.
+    connected: flags.connected && probe.ok,
+    probe,
+  }
 }

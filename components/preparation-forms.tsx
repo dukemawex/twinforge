@@ -19,13 +19,23 @@ const control='h-10 w-full rounded-md border bg-background px-3 text-sm text-for
 async function readJson(response:Response){try{return await response.json()}catch{return {error:response.status===413?'That file is too large to upload':'Upload failed'}}}
 async function upload(file:File,kind:'reference'|'voice'|'photo'|'csv'){
   const safe=file.name.replace(/[^a-zA-Z0-9._-]/g,'-').slice(-100)||'file'
-  const blob=await uploadToBlob(`uploads/${kind}/${crypto.randomUUID()}-${safe}`,file,{
-    access:'private',
-    handleUploadUrl:'/api/upload',
-    contentType:file.type,
-    multipart:file.size>8*1024*1024,
-    clientPayload:JSON.stringify({kind}),
-  })
+  let blob
+  try{
+    blob=await uploadToBlob(`uploads/${kind}/${crypto.randomUUID()}-${safe}`,file,{
+      access:'private',
+      handleUploadUrl:'/api/upload',
+      contentType:file.type,
+      multipart:file.size>8*1024*1024,
+      clientPayload:JSON.stringify({kind}),
+    })
+  }catch(e){
+    const msg=e instanceof Error?e.message:'Upload failed'
+    // Blob SDK sometimes surfaces raw HTML from a misconfigured proxy; keep the UI readable.
+    if(/<!doctype|<html|powered by frp|page you requested was not found/i.test(msg)){
+      throw new Error('Upload could not reach storage. Check BLOB_READ_WRITE_TOKEN is set on Vercel, then retry.')
+    }
+    throw e instanceof Error?e:new Error(msg)
+  }
   const response=await fetch('/api/upload/complete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pathname:blob.pathname,kind,name:file.name})})
   const json=await readJson(response)
   if(!response.ok)throw new Error(json.error||'Upload failed')

@@ -73,3 +73,13 @@ rc-tunnel expose --port 8081
 Then set Vercel `GPU_API_BASE_URL` to the printed `https://rc-….radeon.firstdg.ai` URL and redeploy.
 
 Do **not** use `https://radeon-global.anruicloud.com/` or a `/spaces/.../v1` chat URL.
+
+## Troubleshooting: incomplete asset download
+
+If a job fails with:
+
+> peer closed connection without sending complete message body (received … expected …)
+
+the worker reached Blob storage but the ~50MB+ reference clip was cut mid-transfer.
+Current `main.py` streams the file and retries 3 times — restart uvicorn after updating
+the worker files so that fix is loaded.

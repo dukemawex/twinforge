@@ -428,25 +428,35 @@ export async function fetchWorkerJobState(externalJobId: string): Promise<Worker
 /** Copy a finished render off the worker into Blob so it outlives the pod. */
 async function importWorkerOutput(job: JobRow, state: WorkerJobState) {
   const name = state.outputName || `${job.id}.mp4`
-  const res = await fetch(`${gpuBaseUrl()}/outputs/${encodeURIComponent(name)}`, {
-    headers: { authorization: `Bearer ${gpuApiKey()}` },
-    cache: 'no-store',
-  })
-  if (!res.ok) throw new Error(`Could not fetch output (${res.status})`)
-  const buffer = await res.arrayBuffer()
-  const pathname = `outputs/${job.userId}/${job.id}.mp4`
-  await put(pathname, buffer, { access: 'private', contentType: 'video/mp4', allowOverwrite: true })
-  const [asset] = await db
-    .insert(mediaAssets)
-    .values({
-      userId: job.userId,
-      kind: 'output',
-      pathname,
-      contentType: 'video/mp4',
-      size: buffer.byteLength,
-    })
-    .returning()
-  return asset
+  let lastError: Error | null = null
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const res = await fetch(`${gpuBaseUrl()}/outputs/${encodeURIComponent(name)}`, {
+        headers: { authorization: `Bearer ${gpuApiKey()}` },
+        cache: 'no-store',
+      })
+      if (!res.ok) throw new Error(`Could not fetch output (${res.status})`)
+      const buffer = await res.arrayBuffer()
+      if (!buffer.byteLength) throw new Error('Worker returned an empty output')
+      const pathname = `outputs/${job.userId}/${job.id}.mp4`
+      await put(pathname, buffer, { access: 'private', contentType: 'video/mp4', allowOverwrite: true })
+      const [asset] = await db
+        .insert(mediaAssets)
+        .values({
+          userId: job.userId,
+          kind: 'output',
+          pathname,
+          contentType: 'video/mp4',
+          size: buffer.byteLength,
+        })
+        .returning()
+      return asset
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error('Output import failed')
+      console.error(`Output import attempt ${attempt}/3 failed`, lastError)
+    }
+  }
+  throw lastError || new Error('Output import failed')
 }
 
 /**

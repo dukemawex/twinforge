@@ -100,3 +100,19 @@ The worker now:
 - synthesizes **spoken audio** with `edge-tts` (espeak fallback)
 
 This is still not full lip-sync / avatar animation — that needs a dedicated talking-head model.
+
+## Talking-head / lip-sync (v1.4)
+
+Real mouth motion uses **Wav2Lip** on the pod.
+
+```bash
+cd /workspace/gpu-worker
+source .venv/bin/activate
+bash scripts/bootstrap_talking_head.sh   # clones Wav2Lip + downloads ~400MB weights
+pkill -f 'uvicorn main:app' || true
+uvicorn main:app --host 127.0.0.1 --port 8081
+curl -s http://127.0.0.1:8081/health     # expect lipsync.ready=true
+```
+
+Requires PyTorch (ROCm or CUDA) already on the box. If lip-sync is not bootstrapped,
+jobs still complete via the motion+TTS compositor.

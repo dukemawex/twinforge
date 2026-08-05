@@ -1,0 +1,6 @@
+# Large model trees — bootstrapped on the GPU box, not committed.
+Wav2Lip/
+checkpoints/
+__pycache__/
+*.pth
+*.pyc

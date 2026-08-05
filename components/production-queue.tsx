@@ -33,6 +33,7 @@ function stageLabel(stage?: string | null) {
     script: 'Preparing script',
     assets: 'Downloading assets',
     speech: 'Synthesizing speech',
+    lipsync: 'Lip-sync talking head',
     rendering: 'Rendering',
     completed: 'Completed',
     failed: 'Failed',

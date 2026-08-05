@@ -124,6 +124,9 @@ export type GpuProbeResult = {
   reachable: boolean
   message: string
   ffmpeg?: boolean
+  tts?: boolean
+  lipsync?: boolean
+  lipsyncDevice?: string
 }
 
 /** Live check against GET /health so Settings does not lie when only env vars are set. */
@@ -166,7 +169,14 @@ export async function probeGpuWorker(): Promise<GpuProbeResult> {
         message: describeGpuUpstreamError(res.status, text),
       }
     }
-    let json: { ok?: boolean; ffmpeg?: boolean; polling?: boolean } = {}
+    let json: {
+      ok?: boolean
+      ffmpeg?: boolean
+      tts?: boolean
+      polling?: boolean
+      lipsync?: { ready?: boolean; device?: string }
+      version?: string
+    } = {}
     try {
       json = text ? JSON.parse(text) : {}
     } catch {
@@ -185,14 +195,23 @@ export async function probeGpuWorker(): Promise<GpuProbeResult> {
         message: 'Worker responded, but /health did not report ok:true. Is TwinForge gpu-worker running?',
       }
     }
+    const lipsync = Boolean(json.lipsync?.ready)
+    const parts = [
+      json.ffmpeg ? 'ffmpeg' : 'ffmpeg missing',
+      json.tts ? 'tts' : 'tts missing',
+      lipsync ? `lip-sync (${json.lipsync?.device || 'gpu'})` : 'lip-sync not bootstrapped',
+    ]
     return {
       ok: true,
       configured: true,
       reachable: true,
       ffmpeg: Boolean(json.ffmpeg),
-      message: json.ffmpeg
-        ? 'Worker is reachable and ready for renders.'
-        : 'Worker is reachable, but ffmpeg is missing on the pod — installs will fail at render time.',
+      tts: Boolean(json.tts),
+      lipsync,
+      lipsyncDevice: json.lipsync?.device,
+      message: lipsync
+        ? `Worker ready — ${parts.join(', ')}.`
+        : `Worker reachable (${parts.join(', ')}). Run scripts/bootstrap_talking_head.sh on the pod for real lip-sync.`,
     }
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'request failed'

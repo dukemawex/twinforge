@@ -43,7 +43,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="TwinForge GPU Worker", version="1.1.0")
+app = FastAPI(title="TwinForge GPU Worker", version="1.2.0")
 ROOT = Path(__file__).resolve().parent
 OUTPUT_DIR = ROOT / "outputs"
 WORK_DIR = ROOT / "work"

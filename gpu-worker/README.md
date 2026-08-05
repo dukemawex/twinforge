@@ -83,3 +83,10 @@ If a job fails with:
 the worker reached Blob storage but the ~50MB+ reference clip was cut mid-transfer.
 Current `main.py` streams the file and retries 3 times — restart uvicorn after updating
 the worker files so that fix is loaded.
+
+## Troubleshooting: ffmpeg copyright / configuration dump
+
+If the library shows a wall of ffmpeg build flags, the real error was truncated.
+Current worker extracts a still frame from reference **videos** (twins upload
+MP4/MOV, not only photos) before captioning, and keeps the useful tail of
+ffmpeg errors. Restart uvicorn after updating `main.py`.
